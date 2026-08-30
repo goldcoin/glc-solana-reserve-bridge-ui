@@ -54,14 +54,14 @@ The bridge backend handles denomination conversion safely and treats the backend
 
 ## Bridge Fee
 
-The bridge charges a **1% service fee**.
+The bridge charges a **3% service fee**. Network fees are separate.
 
 For example:
 
 ```text
 Bridge amount:  1,000 GLC
-Bridge fee:        10 GLC
-You receive:      990 GLC
+Bridge fee:        30 GLC
+You receive:      970 GLC
 ```
 
 Quotes, fees, limits, reserve capacity, and final settlement amounts are determined by the bridge backend.

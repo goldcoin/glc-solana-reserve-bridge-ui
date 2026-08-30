@@ -13,8 +13,10 @@ repository for the actual migration; this file is the rationale snapshot from th
 - Endpoints: `GET /status`, `GET /limits`, `GET /reserve`, `GET /health`, `GET /stats`,
   `GET /reserves/history`, `GET /explorer/events`, `GET /transfers`, `POST /transfers` (GlcToSol only),
   `POST /quote`, `GET /transfers/:id`.
-- Fee is a fixed 100 bps (1%), computed server-side only (`amount_conversion::compute_fee`). The
-  client can never submit or override fee/net — `POST /transfers` silently ignores any such field.
+- Fee is a fixed, compile-time bps rate (100 bps / 1% when this assessment was written; 300 bps /
+  3% as of 2026-08-29 — always read the live rate from `GET /limits`), computed server-side only
+  (`amount_conversion::compute_fee`). The client can never submit or override fee/net —
+  `POST /transfers` silently ignores any such field.
 - `RequestState` (real wire enum, `ledger/types.rs`): `LiquidityReserved`, `AwaitingDeposit`,
   `DepositObserved`, `Confirming`, `SourceFinalized`, `SettlementAuthorized`, `DestinationSubmitted`,
   `DestinationConfirmed`, `Settled`, `Expired`, `Cancelled`, `Reorged`,
