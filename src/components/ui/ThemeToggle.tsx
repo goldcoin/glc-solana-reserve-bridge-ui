@@ -7,9 +7,11 @@ import { cn } from "@/lib/utils/cn";
 /**
  * The theme control (design spec E2 "dark mode is a theme file").
  *
- * A two-segment pill, fixed to the bottom-right, built from the same tokens,
- * radius and elevation as every other surface — it reads as part of the
- * chrome rather than as a widget bolted on.
+ * A two-segment pill, built from the same tokens, radius and elevation as
+ * every other surface — it reads as part of the chrome rather than as a
+ * widget bolted on. It is positioned by `CornerDock`, which owns the
+ * bottom-right stack it shares with the help control; this component only
+ * describes itself.
  *
  * Two things about it are deliberate and worth stating.
  *
@@ -38,26 +40,7 @@ export function ThemeToggle({ className }: { className?: string }) {
       user can only reach by walking the whole page, and it is the one thing
       on screen that is in neither the header, the main outlet nor the footer.
     */
-    <div
-      role="region"
-      aria-label="Appearance"
-      className={cn(
-        "fixed z-30",
-        /*
-          `max()` against the safe-area insets keeps the pill clear of the
-          home indicator and of a rounded display's corner, rather than
-          tucking under either. Nothing else is anchored to the bottom of the
-          viewport on any route, so this overlaps no navigation and no wallet
-          control; the navigation sheet and the wallet modal are full-screen
-          at z-50 and cover it outright.
-        */
-        "right-[max(1rem,env(safe-area-inset-right))] bottom-[max(1rem,env(safe-area-inset-bottom))]",
-        "md:right-6 md:bottom-6",
-        // A floating control is chrome, and chrome does not belong on paper.
-        "print:hidden",
-        className,
-      )}
-    >
+    <div role="region" aria-label="Appearance" className={className}>
       <div
         role="group"
         aria-label="Colour theme"

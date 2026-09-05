@@ -5,6 +5,8 @@ import { Footer } from "./Footer";
 import { BridgeStatusBar } from "./BridgeStatusBar";
 import { ReserveBanner } from "./ReserveBanner";
 import { WalletSlot } from "./WalletSlot";
+import { CornerDock } from "./CornerDock";
+import { HelpWidget } from "@/components/help/HelpWidget";
 import { ThemeToggle } from "@/components/ui/ThemeToggle";
 import { isMockMode } from "@/lib/api";
 import { devBuildSha } from "@/lib/dev/build-info";
@@ -103,12 +105,19 @@ export function AppShell({
       <Footer />
 
       {/*
-        Last in the DOM on purpose: the control is fixed to the corner, so its
+        Last in the DOM on purpose: the dock is fixed to the corner, so its
         position in the tab order is a free choice, and putting it after the
         footer keeps it out of the way of every keyboard user who came here to
-        move funds rather than to change the theme.
+        move funds rather than to read the FAQ or change the theme.
+
+        Help precedes the theme control in that order, and sits above it on
+        screen: someone reaching this far by keyboard is far likelier to be
+        looking for help than for a colour scheme.
       */}
-      <ThemeToggle />
+      <CornerDock>
+        <HelpWidget />
+        <ThemeToggle />
+      </CornerDock>
     </div>
   );
 }
