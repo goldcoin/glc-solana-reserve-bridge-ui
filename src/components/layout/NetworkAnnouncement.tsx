@@ -3,7 +3,6 @@
 import Image from "next/image";
 import { Clock, X } from "lucide-react";
 import { useId, useState } from "react";
-import { Button } from "@/components/ui/Button";
 import { useIsMounted } from "@/lib/hooks/useIsMounted";
 import {
   COMING_SOON_LABEL,
@@ -28,17 +27,16 @@ import { cn } from "@/lib/utils/cn";
  * "Bridge notices" region: a reader navigating by landmark should not find a
  * product announcement filed among notices about money movement.
  *
- * Two consequences worth stating.
+ * One consequence worth stating: "coming soon" is carried by text and an icon,
+ * never by colour. The gold outline is brand accent — gold is never a status
+ * colour in this system (see src/lib/status) — and the strip's green is the
+ * same token family the trust strip uses, which is why the state is spelled
+ * out in words instead.
  *
- * FIRST: "coming soon" is carried by text and an icon, never by colour. The
- * gold outline is brand accent — gold is never a status colour in this system
- * (see src/lib/status) — and the strip's green is the same token family the
- * trust strip uses, which is why the state is spelled out in words instead.
- *
- * SECOND: the call to action is disabled, not a link. This deployment serves
- * no Robinhood page and no URL is configured for one, so `learnMoreHref` is
- * `null` and the control states why it cannot be used. A link to a route that
- * would 404 would be worse than no link at all.
+ * The strip offers no call to action. There is no Robinhood page to open, and
+ * a disabled button explaining that is still a control the eye and the tab
+ * order have to account for. The heading, one line of copy and the dismiss
+ * control are the whole row; the only interactive element is the dismiss.
  */
 
 /**
@@ -189,33 +187,14 @@ export function NetworkAnnouncement({
               <p className="text-body-sm text-ink-700">{announcement.description}</p>
             </div>
 
-            {/* Dropped below `lg`, where the row has no space to spare. */}
-            <span aria-hidden="true" className="bg-ink-200 hidden h-4 w-px lg:block" />
-            <p className="text-body-sm text-ink-600 hidden shrink-0 lg:block">
-              {announcement.secondaryText}
-            </p>
-
-            {announcement.learnMoreHref === null ? (
-              <Button
-                size="sm"
-                className="shrink-0"
-                disabled
-                disabledReason={`${announcement.network} bridging is not available yet — there is no page to open until the integration goes live.`}
-                reasonPlacement="accessible"
-              >
-                Learn more
-              </Button>
-            ) : null}
-
             {/*
               The Robinhood mark. Purely decorative — the network is already
               named in the heading, so announcing the image would say
-              "Robinhood" twice — and shown only from `lg` up, alongside the
-              secondary text and divider, because below that the row has no
-              width left to give it. `xl` rather than `lg`: at exactly 1024px
-              the divider, the secondary text and this mark all arrive at
-              once and the row wraps to two lines. Decorative artwork is the
-              part that yields, not the copy.
+              "Robinhood" twice — and shown only from `xl` up, because below
+              that the row has no width left to give it. Decorative artwork is
+              the part that yields, not the copy, so the breakpoint stays
+              where it is rather than moving down into the space the removed
+              secondary text and divider left behind.
 
               Natural ratio (1374x1145) with only a height set: a brand mark
               that has been stretched is worse than a brand mark that is

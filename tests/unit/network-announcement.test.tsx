@@ -67,10 +67,14 @@ describe("rendering", () => {
     expect(banner()).toHaveAccessibleName("Network announcement");
   });
 
-  it("renders the configured description and secondary text", () => {
+  it("renders the configured description as the strip's only line of copy", () => {
     render(<NetworkAnnouncement />);
     expect(within(banner()).getByText(config.description)).toBeInTheDocument();
-    expect(within(banner()).getByText(config.secondaryText)).toBeInTheDocument();
+    // The strip carried a second, quieter line ("More details soon.") beside
+    // the description. It was removed rather than reworded, so nothing should
+    // reintroduce a trailing aside next to the copy.
+    expect(within(banner()).queryByText(/more details soon/i)).toBeNull();
+    expect(within(banner()).getAllByText(/./, { selector: "p" })).toHaveLength(1);
   });
 
   it("renders nothing at all when the config is disabled", () => {
@@ -117,14 +121,24 @@ describe("artwork", () => {
   });
 });
 
-describe("the call to action", () => {
-  it("is disabled, and introduces no route while no destination is configured", () => {
-    expect(config.learnMoreHref).toBeNull();
+describe("controls", () => {
+  it("offers no call to action — there is no page to open", () => {
+    render(<NetworkAnnouncement />);
+    expect(
+      within(banner()).queryByRole("button", { name: /learn more/i }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("leaves dismissal as the strip's only control, disabled or otherwise", () => {
     render(<NetworkAnnouncement />);
 
-    const cta = within(banner()).getByRole("button", { name: "Learn more" });
-    expect(cta).toBeDisabled();
-    expect(cta).toHaveAccessibleDescription(/not available yet/i);
+    // A disabled button is still exposed to assistive technology, so this
+    // catches a dead control being left behind as well as a live one.
+    const controls = within(banner()).getAllByRole("button");
+    expect(controls).toHaveLength(1);
+    expect(controls[0]).toHaveAccessibleName(
+      `Dismiss the ${config.network} announcement`,
+    );
   });
 
   it("does not reuse the badge's wording, so the two are never confused", () => {
@@ -138,19 +152,6 @@ describe("the call to action", () => {
     render(<NetworkAnnouncement />);
     expect(within(banner()).queryAllByRole("link")).toHaveLength(0);
     expect(banner().querySelectorAll("a")).toHaveLength(0);
-  });
-
-  it("cannot be activated by click or by keyboard", async () => {
-    const user = userEvent.setup();
-    render(<NetworkAnnouncement />);
-
-    const cta = within(banner()).getByRole("button", { name: "Learn more" });
-    await user.click(cta);
-    // A disabled button is not focusable, so the tab never lands on it and
-    // Enter cannot reach it either.
-    await user.tab();
-    expect(cta).not.toHaveFocus();
-    expect(banner()).toBeInTheDocument();
   });
 });
 
