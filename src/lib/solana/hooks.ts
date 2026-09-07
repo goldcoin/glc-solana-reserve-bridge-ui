@@ -20,6 +20,13 @@ export function useWalletConnection(): WalletConnection {
 }
 
 export const walletQueryKeys = {
+  /**
+   * Every balance query for this chain, for invalidating them together
+   * after a transaction has moved one. Named rather than sliced off a
+   * fuller key by index, which would break silently if a key gained a
+   * segment.
+   */
+  balances: () => ["solana", "balance"] as const,
   solBalance: (address: string | null) => ["solana", "balance", "sol", address] as const,
   tokenBalance: (address: string | null, mint: string | undefined) =>
     ["solana", "balance", "token", address, mint] as const,

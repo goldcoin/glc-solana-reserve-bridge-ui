@@ -1,6 +1,27 @@
-import type { Chain, Route, SettlementRoute } from "@/lib/api/schemas/common";
+import type { Route, SettlementRoute } from "@/lib/api/schemas/common";
 import { isSettlementRoute } from "@/lib/api/schemas/common";
-import { ROBINHOOD_DECIMALS } from "./robinhood-amount";
+import {
+  descriptorFor,
+  GOLDCOIN_GLC,
+  ROBINHOOD_GLC,
+  SOLANA_GLC,
+  type ChainDescriptor,
+  type TokenDescriptor,
+} from "./chain-registry";
+
+/**
+ * The registry entry for a chain this module knows exists. Throws rather
+ * than falling back, so a descriptor removed from the registry is a
+ * startup failure instead of a silently mislabelled route.
+ */
+function requireChain(chainId: string): ChainDescriptor {
+  const descriptor = descriptorFor(chainId);
+  if (!descriptor) throw new Error(`no chain descriptor for ${chainId}`);
+  return descriptor;
+}
+
+export { GOLDCOIN_GLC, ROBINHOOD_GLC, SOLANA_GLC };
+export type { ChainDescriptor, TokenDescriptor };
 
 /**
  * The direction model.
@@ -18,17 +39,6 @@ import { ROBINHOOD_DECIMALS } from "./robinhood-amount";
  * live decimals actually used for a given amount and is authoritative
  * whenever it disagrees.
  */
-
-export interface ChainDescriptor {
-  readonly id: Chain;
-  readonly name: string;
-}
-
-export interface TokenDescriptor {
-  readonly symbol: string;
-  readonly name: string;
-  readonly decimals: number;
-}
 
 export interface DirectionSide {
   readonly chain: ChainDescriptor;
@@ -55,37 +65,9 @@ export interface DirectionDescriptor {
   readonly funding: "goldcoin-deposit-address" | "solana-program" | "robinhood-contract";
 }
 
-const GOLDCOIN: ChainDescriptor = { id: "goldcoin", name: "Goldcoin" };
-const SOLANA: ChainDescriptor = { id: "solana", name: "Solana" };
-const ROBINHOOD: ChainDescriptor = { id: "robinhood", name: "Robinhood Network" };
-
-/**
- * Token display names, used everywhere a direction is described to a user.
- * "GLC L1" / "GLC on Solana" names the asset by where it already lives,
- * which is the point of a reserve-backed bridge — there is no "native" vs
- * "wrapped" pair to distinguish, just the same GLC on two networks.
- */
-export const GOLDCOIN_GLC: TokenDescriptor = {
-  symbol: "GLC",
-  name: "GLC L1",
-  decimals: 8,
-};
-export const SOLANA_GLC: TokenDescriptor = {
-  symbol: "GLC",
-  name: "GLC on Solana",
-  decimals: 6,
-};
-/**
- * The same GLC again, on Robinhood Network, at that token's own
- * 18 decimals. The precision is a protocol constant asserted against the
- * deployed token at backend preflight, not a live read — see
- * `./robinhood-amount`.
- */
-export const ROBINHOOD_GLC: TokenDescriptor = {
-  symbol: "GLC",
-  name: "GLC on Robinhood",
-  decimals: ROBINHOOD_DECIMALS,
-};
+const GOLDCOIN = requireChain("goldcoin");
+const SOLANA = requireChain("solana");
+const ROBINHOOD = requireChain("robinhood");
 
 // The minimum GROSS amount a user may enter/bridge, in either direction,
 // is no longer a fixed constant here — a hardcoded "100 GLC" quietly went

@@ -54,4 +54,12 @@ export {
   type RobinhoodDepositStep,
 } from "./deposit";
 
-export { useEvmWallet, useRobinhoodDeposit, type EvmWalletState } from "./hooks";
+export {
+  useEvmWallet,
+  useRobinhoodDeposit,
+  useRobinhoodGlcBalance,
+  evmWalletQueryKeys,
+  type EvmWalletState,
+} from "./hooks";
+
+export { fetchRobinhoodGlcBalance, type EvmTokenBalance } from "./balance";

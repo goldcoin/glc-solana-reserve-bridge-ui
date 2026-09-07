@@ -1,5 +1,4 @@
 import { env } from "./env";
-import type { Chain } from "@/lib/api/schemas/common";
 
 /**
  * Every outbound URL the UI can render, derived from configuration.
@@ -49,14 +48,18 @@ export function robinhoodAddressUrl(address: string): string | null {
  * explorer. Returns `null` when no template is configured for that chain,
  * which is the existing "render the id as plain text" path.
  */
-export function chainTxUrl(chain: Chain, id: string): string | null {
-  switch (chain) {
+export function chainTxUrl(chainId: string, id: string): string | null {
+  switch (chainId) {
     case "goldcoin":
       return goldcoinTxUrl(id);
     case "solana":
       return solanaTxUrl(id);
     case "robinhood":
       return robinhoodTxUrl(id);
+    default:
+      // A network this build has no explorer template for. Plain text is
+      // honest; a link to a guessed host is not.
+      return null;
   }
 }
 

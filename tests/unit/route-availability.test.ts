@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   isRouteOpen,
   routeAvailability,
-  ROUTE_PRESENTATION_ORDER,
+  routeAvailabilitySummary,
 } from "@/lib/bridge/route-availability";
 import { chainsViewSchema } from "@/lib/api/schemas/chains";
 import * as fixtures from "@/lib/api/mock/fixtures";
@@ -74,12 +74,15 @@ describe("isRouteOpen", () => {
   });
 });
 
-describe("ROUTE_PRESENTATION_ORDER", () => {
-  it("covers every route the backend can name, so none is silently missing from the UI", () => {
-    expect([...ROUTE_PRESENTATION_ORDER].sort()).toEqual(
-      chains()
-        .routes.map((route) => route.id)
-        .sort(),
-    );
+describe("routeAvailabilitySummary", () => {
+  it("counts open routes out of everything the backend listed", () => {
+    // Counted from the response itself, so a route the backend adds later
+    // is included with no frontend deploy.
+    expect(routeAvailabilitySummary(chains())).toEqual({ open: 2, total: 6 });
+    expect(routeAvailabilitySummary(openChains())).toEqual({ open: 4, total: 6 });
+  });
+
+  it("returns null rather than 0 of 0 when /chains has not loaded", () => {
+    expect(routeAvailabilitySummary(undefined)).toBeNull();
   });
 });

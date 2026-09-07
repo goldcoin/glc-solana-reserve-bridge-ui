@@ -1,4 +1,5 @@
 import {
+  Ban,
   Circle,
   CircleAlert,
   CircleCheck,
@@ -144,6 +145,43 @@ export const directionAvailabilityStatus: Record<
     icon: Pause,
   },
 };
+
+/* -------------------------------------------------------------------------- */
+/* Route availability (GET /chains)                                            */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * The four verdicts `routeAvailability` can return, as badges.
+ *
+ * Deliberately NOT `directionAvailabilityStatus` above. That vocabulary
+ * describes the two Solana-governed directions, whose cause IS knowable
+ * from `GET /status` — an operator pause, an exhausted 24h quota, a
+ * constrained reserve — so "Paused" there is a derived fact.
+ *
+ * `GET /chains` publishes no cause at all: `enabled` is the AND of three
+ * independent gates and the route view deliberately never names which one
+ * refused. Rendering a closed route as "Paused" would therefore assert an
+ * operator action the backend never claimed, and — worse — would say the
+ * same thing about `SolToRhn`/`RhnToSol`, which no operator action can
+ * open because they have no settlement machinery on either side. The two
+ * cases are the same colour on screen today and must not be.
+ */
+export type RouteAvailabilityStatus = "open" | "closed" | "unimplemented" | "unknown";
+
+export const routeAvailabilityStatus: Record<RouteAvailabilityStatus, StatusDescriptor> =
+  {
+    open: { label: "Available", tone: "success", icon: CircleCheck },
+    /** Implemented, and refused by the gate. Reopening it is a backend change. */
+    closed: { label: "Unavailable", tone: "danger", icon: CircleSlash },
+    /**
+     * `implemented: false` — structurally inert in this build. Neutral, not
+     * danger: nothing is wrong and nothing is waiting to be switched back on,
+     * so it must not read as an incident or as a temporary state.
+     */
+    unimplemented: { label: "Not implemented", tone: "neutral", icon: Ban },
+    /** `/chains` has not loaded. Fail closed, and say so rather than guessing. */
+    unknown: { label: "Unknown", tone: "neutral", icon: CircleHelp },
+  };
 
 /* -------------------------------------------------------------------------- */
 /* Wallet connection                                                           */

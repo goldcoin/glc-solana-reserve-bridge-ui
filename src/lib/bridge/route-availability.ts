@@ -1,5 +1,4 @@
 import type { ChainsViewDto, RouteViewDto } from "@/lib/api/schemas/chains";
-import type { Route } from "@/lib/api/schemas/common";
 
 /**
  * Route availability, read straight off `GET /chains`.
@@ -10,6 +9,12 @@ import type { Route } from "@/lib/api/schemas/common";
  * config, from a hardcoded list, from the presence of a contract address
  * — is precisely the drift this module exists to prevent. If `/chains`
  * has not loaded, the answer is "unknown", never "probably fine".
+ *
+ * Routes are looked up by the backend's own id STRING rather than by this
+ * build's `Route` enum. A route the backend adds later is therefore
+ * answerable here — as `unknown`, which fails closed — instead of being a
+ * type error at the lookup. `Route` values are strings, so every existing
+ * caller is unaffected.
  */
 
 export type RouteAvailability =
@@ -45,9 +50,9 @@ function reasonOf(view: RouteViewDto): string {
 
 export function routeAvailability(
   chains: ChainsViewDto | undefined,
-  route: Route,
+  routeId: string,
 ): RouteAvailability {
-  const view = chains?.routes.find((entry) => entry.id === route);
+  const view = chains?.routes.find((entry) => entry.id === routeId);
   if (!view) return { kind: "unknown", reason: UNKNOWN_REASON, view: null };
   if (!view.implemented) {
     return { kind: "unimplemented", reason: reasonOf(view), view };
@@ -57,23 +62,33 @@ export function routeAvailability(
 }
 
 /** True only for a route `/chains` positively reports as open. */
-export function isRouteOpen(chains: ChainsViewDto | undefined, route: Route): boolean {
-  return routeAvailability(chains, route).kind === "open";
+export function isRouteOpen(chains: ChainsViewDto | undefined, routeId: string): boolean {
+  return routeAvailability(chains, routeId).kind === "open";
+}
+
+export interface RouteAvailabilitySummary {
+  /** Routes `/chains` reports as both implemented and enabled. */
+  readonly open: number;
+  /** Every route `/chains` listed, open or not. */
+  readonly total: number;
 }
 
 /**
- * The routes to offer in the selector, in a stable presentation order.
+ * How many of the backend's routes are open right now, for one-line copy
+ * like "2 of 6 routes available".
  *
- * Unimplemented routes are INCLUDED so the two Solana<->Robinhood pairs
- * render visibly disabled rather than silently vanishing — a user who
- * expects them should see that they exist and are not usable, which is
- * also what the backend's `implemented` flag is for.
+ * Counted from the response itself rather than from any UI-side list, so a
+ * route the backend adds later is included with no frontend deploy — the
+ * same property `routeAvailability` exists to preserve. `null` when
+ * `/chains` has not loaded: a caller must say it does not know yet, never
+ * report `0 of 0`.
  */
-export const ROUTE_PRESENTATION_ORDER: readonly Route[] = [
-  "GlcToSol",
-  "SolToGlc",
-  "GlcToRhn",
-  "RhnToGlc",
-  "SolToRhn",
-  "RhnToSol",
-];
+export function routeAvailabilitySummary(
+  chains: ChainsViewDto | undefined,
+): RouteAvailabilitySummary | null {
+  if (!chains) return null;
+  const open = chains.routes.filter(
+    (view) => routeAvailability(chains, view.id).kind === "open",
+  ).length;
+  return { open, total: chains.routes.length };
+}

@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { chainSchema, routeSchema, unixSecondsSchema } from "./common";
+import { unixSecondsSchema } from "./common";
 
 /**
  * `GET /chains` — the chain/route registry, and the ONLY authoritative
@@ -20,12 +20,25 @@ import { chainSchema, routeSchema, unixSecondsSchema } from "./common";
  * it from its own configuration. That is what makes enabling a route
  * later a backend-only change: no frontend deploy, no env var, no
  * hardcoded list of "routes we support" to go stale.
+ *
+ * # Why this endpoint's ids are open strings, unlike every other schema
+ *
+ * `/chains` is the DISCOVERY endpoint: its entire job is to tell a client
+ * about networks and routes, including ones the client may not know. So a
+ * chain or route id here is an open string, and a backend that adds a
+ * fourth network ships it to an unchanged frontend without breaking the
+ * page — the new network simply lists as one this build cannot use yet.
+ *
+ * That is the opposite of the rule for settlement records. A
+ * `TransferView.direction` outside the known `Route` enum is a contract
+ * break worth surfacing loudly, and stays strictly validated. Discovery is
+ * open; anything describing money that has already moved is closed.
  */
 
 /** One chain. Names only — the backend exposes no RPC URL, contract address or explorer host here. */
 export const chainViewSchema = z.object({
-  /** Stable identifier. Parse this. */
-  id: chainSchema,
+  /** Stable identifier — `goldcoin`/`solana`/`robinhood` today, open by design. */
+  id: z.string().min(1),
   /** Human-readable. Never parse this. */
   display_name: z.string().min(1),
 });
@@ -33,9 +46,9 @@ export const chainViewSchema = z.object({
 export type ChainViewDto = z.infer<typeof chainViewSchema>;
 
 export const routeViewSchema = z.object({
-  id: routeSchema,
-  source_chain: chainSchema,
-  destination_chain: chainSchema,
+  id: z.string().min(1),
+  source_chain: z.string().min(1),
+  destination_chain: z.string().min(1),
   /** The server's verdict. The only availability signal this UI may use. */
   enabled: z.boolean(),
   /**

@@ -113,12 +113,19 @@ export function useQuote(
   direction: SettlementRoute,
   /** Exact canonical atomic amount as a decimal string; "0" means none. */
   grossAmount: string,
+  /**
+   * Additional caller-side gate. The form uses it to withhold a quote for
+   * a pair that resolves to no route, or to a route with no settlement
+   * machinery — asking the backend to price `SolToRhn` would only earn a
+   * refusal it already knows about.
+   */
+  enabled = true,
 ): UseQueryResult<QuoteOutputDto> {
   return useQuery({
     queryKey: queryKeys.quote(direction, grossAmount),
     queryFn: ({ signal }) =>
       bridgeApi.getQuote({ direction, gross_amount: grossAmount }, signal),
-    enabled: BigInt(grossAmount) > 0n,
+    enabled: enabled && BigInt(grossAmount) > 0n,
     staleTime: 5_000,
     retry: false,
   });

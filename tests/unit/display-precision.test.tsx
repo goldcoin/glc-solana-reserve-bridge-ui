@@ -7,12 +7,12 @@ import { ReservesView } from "@/features/reserves/ReservesView";
 import { StatusView } from "@/features/status/StatusView";
 import { TransferDetail } from "@/features/transfer/TransferDetail";
 import { TransferRow } from "@/features/activity/TransferRow";
-import { QuoteBreakdown } from "@/features/bridge/QuoteBreakdown";
+import { RouteSummary } from "@/features/bridge/RouteSummary";
+import { descriptorFor } from "@/lib/bridge";
 import { DepositInstructions } from "@/features/bridge/DepositInstructions";
 import * as fixtures from "@/lib/api/mock/fixtures";
 import type { QuoteOutputDto } from "@/lib/api/schemas/quote";
 import type { TransferViewDto } from "@/lib/api/schemas/transfer";
-import type { UseQueryResult } from "@tanstack/react-query";
 
 /**
  * Displayed GLC precision.
@@ -193,26 +193,40 @@ describe("Bridge quote summary", () => {
     destination_asset: "GLC (Solana)",
   };
 
-  function asResult(data: QuoteOutputDto) {
-    return { isPending: false, isError: false, data } as unknown as UseQueryResult<
-      QuoteOutputDto,
-      Error
-    >;
+  /** The summary renders whatever quote it is handed; nothing else is needed. */
+  function renderSummary(data: QuoteOutputDto) {
+    return render(
+      <RouteSummary
+        source={descriptorFor("goldcoin")!}
+        destination={descriptorFor("solana")!}
+        availability={{
+          kind: "open",
+          view: {
+            id: "GlcToSol",
+            source_chain: "goldcoin",
+            destination_chain: "solana",
+            enabled: true,
+            disabled_reason: null,
+            implemented: true,
+          },
+        }}
+        quote={data}
+        quotePending={false}
+      />,
+    );
   }
 
   it("lays out the backend's own figures at two places, with separators", () => {
-    render(<QuoteBreakdown quote={asResult(quote)} />);
+    renderSummary(quote);
 
-    expect(screen.getByText(new RegExp(REPORTED_DISPLAY))).toBeInTheDocument();
-    expect(screen.getByText(/−2,886\.54/)).toBeInTheDocument();
+    expect(screen.getByText(/2,886\.54/)).toBeInTheDocument();
     expect(screen.getByText(/93,331\.52/)).toBeInTheDocument();
+    // The raw atomic digits never reach the page.
     expect(screen.queryByText(/29927559/)).not.toBeInTheDocument();
   });
 
   it("shows a figure it cannot parse exactly as the backend sent it", () => {
-    render(
-      <QuoteBreakdown quote={asResult({ ...quote, fee_display_amount: "1.0e2" })} />,
-    );
+    renderSummary({ ...quote, fee_display_amount: "1.0e2" });
     expect(screen.getByText(/1\.0e2/)).toBeInTheDocument();
   });
 });

@@ -1,7 +1,7 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { renderWithQueryClient } from "./test-utils";
+import { primaryCta, renderWithQueryClient, selectNetwork } from "./test-utils";
 import * as fixtures from "@/lib/api/mock/fixtures";
 import { BridgeCard } from "@/features/bridge/BridgeCard";
 
@@ -67,6 +67,11 @@ vi.mock("@/lib/solana", () => ({
   useWalletConnection: () => walletConnection,
   useDepositToReserve: () => ({ capability: depositCapability, deposit: depositFn }),
   isValidAddress: (value: string) => /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(value),
+  // The FROM panel reads a source balance; with no wallet connected the
+  // hook short-circuits before the query, so a minimal stub is enough.
+  useTokenBalance: () => ({ isPending: true, isError: false, data: undefined }),
+  isTokenBalanceAvailable: () => true,
+  walletQueryKeys: { balances: () => ["solana", "balance"] },
 }));
 
 const VALID_SOLANA_ADDRESS = "9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM";
@@ -128,7 +133,7 @@ describe("BridgeCard — direction switching", () => {
     expect(screen.getByLabelText(/Amount in GLC/i)).toBeInTheDocument();
     expect(screen.getByLabelText("Solana recipient address")).toBeInTheDocument();
 
-    await user.click(screen.getByRole("radio", { name: /GLC on Solana.*GLC L1/i }));
+    await selectNetwork(user, "Source network", /Solana/);
 
     expect(screen.getByLabelText("Goldcoin destination address")).toBeInTheDocument();
   });
@@ -141,7 +146,7 @@ describe("BridgeCard — direction switching", () => {
     await user.type(amountInput, "100");
     expect(amountInput).toHaveValue("100");
 
-    await user.click(screen.getByRole("radio", { name: /GLC on Solana.*GLC L1/i }));
+    await selectNetwork(user, "Source network", /Solana/);
 
     const newAmountInput = screen.getByLabelText(/Amount in GLC/i);
     expect(newAmountInput).toHaveValue("");
@@ -194,17 +199,16 @@ describe("BridgeCard — POST /quote integration and fee presentation", () => {
       );
     });
 
-    // "You bridge" is now also the amount field's own visible label, so
-    // both occurrences are asserted rather than assuming just one.
-    await waitFor(() =>
-      expect(screen.getAllByText("You bridge").length).toBeGreaterThan(0),
-    );
-    expect(screen.getByText("Bridge fee (3%)")).toBeInTheDocument();
+    // The route summary carries the rate AND the amount, and the TO panel
+    // carries the received figure. Both are the backend's own strings at
+    // the shared two-decimal display precision.
+    await waitFor(() => expect(screen.getByText("Bridge fee")).toBeInTheDocument());
+    expect(screen.getByText(/3% · 30\.00/)).toBeInTheDocument();
     expect(screen.getByText("You receive")).toBeInTheDocument();
-    // The backend's own figures, at the shared two-decimal display precision.
-    expect(screen.getByText(/1,000\.00/)).toBeInTheDocument();
-    expect(screen.getByText(/−30\.00/)).toBeInTheDocument();
-    expect(screen.getByText(/970\.00/)).toBeInTheDocument();
+    expect(screen.getAllByText(/970\.00/).length).toBeGreaterThan(0);
+    // The amount the user typed stays exactly as typed — never reformatted
+    // under the cursor.
+    expect(screen.getByLabelText(/Amount in GLC/i)).toHaveValue("1000");
   });
 
   it("never displays a fee/net figure it computed itself — only what the quote returned", async () => {
@@ -219,9 +223,12 @@ describe("BridgeCard — POST /quote integration and fee presentation", () => {
 
     // Formatting-only: these are the quote's fee/net strings, not a fee this
     // component derived from the gross amount (which would read 30 / 970).
+    // The net appears twice — in the TO panel and in the summary — and both
+    // must be the backend's figure.
     expect(await screen.findByText(/7\.77/)).toBeInTheDocument();
-    expect(screen.getByText(/992\.23/)).toBeInTheDocument();
-    expect(screen.queryByText(/−30\.00/)).not.toBeInTheDocument();
+    expect(screen.getAllByText(/992\.23/).length).toBeGreaterThan(0);
+    expect(screen.queryByText(/30\.00/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/970\.00/)).not.toBeInTheDocument();
   });
 });
 
@@ -233,7 +240,7 @@ describe("BridgeCard — reserve capacity and pause gating", () => {
     expect((await screen.findAllByText(/is currently paused\./i)).length).toBeGreaterThan(
       0,
     );
-    const submit = screen.getByRole("button", { name: /Create deposit request/i });
+    const submit = primaryCta();
     expect(submit).toBeDisabled();
   });
 
@@ -247,9 +254,7 @@ describe("BridgeCard — reserve capacity and pause gating", () => {
     expect(
       await screen.findByText(/insufficient reserve liquidity/i),
     ).toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: /Create deposit request/i }),
-    ).toBeDisabled();
+    expect(primaryCta()).toBeDisabled();
   });
 });
 
@@ -269,7 +274,7 @@ describe("BridgeCard — transfer submission", () => {
       VALID_SOLANA_ADDRESS,
     );
 
-    const submit = await screen.findByRole("button", { name: /Create deposit request/i });
+    const submit = primaryCta();
     await waitFor(() => expect(submit).toBeEnabled());
     await user.click(submit);
 
@@ -299,7 +304,7 @@ describe("BridgeCard — transfer submission", () => {
       VALID_SOLANA_ADDRESS,
     );
 
-    const submit = await screen.findByRole("button", { name: /Create deposit request/i });
+    const submit = primaryCta();
     await waitFor(() => expect(submit).toBeEnabled());
     await user.click(submit);
 
@@ -322,7 +327,7 @@ describe("BridgeCard — Solana -> Goldcoin wallet-disconnected gating", () => {
     const user = userEvent.setup();
     renderWithQueryClient(<BridgeCard />);
 
-    await user.click(screen.getByRole("radio", { name: /GLC on Solana.*GLC L1/i }));
+    await selectNetwork(user, "Source network", /Solana/);
     await waitFor(() => expect(getLimits).toHaveBeenCalled());
 
     await user.type(screen.getByLabelText(/Amount in GLC/i), "100");
@@ -331,7 +336,7 @@ describe("BridgeCard — Solana -> Goldcoin wallet-disconnected gating", () => {
       "not-checked-here",
     );
 
-    const submit = await screen.findByRole("button", { name: /Deposit from wallet/i });
+    const submit = primaryCta();
     expect(submit).toBeDisabled();
   });
 });
@@ -344,10 +349,13 @@ describe("BridgeCard — loading states", () => {
 
     renderWithQueryClient(<BridgeCard />);
 
-    expect(screen.getByText(/Loading bridge status/i)).toBeInTheDocument();
+    // Which of the two loading reasons shows depends on which read settles
+    // first; either way nothing is submittable, which is the property under
+    // test. Availability is checked before status, so both are "loading".
     expect(
-      screen.getByRole("button", { name: /Create deposit request/i }),
-    ).toBeDisabled();
+      screen.getByText(/Loading (bridge status|route availability)/i),
+    ).toBeInTheDocument();
+    expect(primaryCta()).toBeDisabled();
   });
 });
 
@@ -362,7 +370,7 @@ describe("BridgeCard — rolling 24h quota states (backend 2026-08-22 workflow)"
     expect(
       screen.getAllByText(/New transfers are temporarily unavailable\./).length,
     ).toBeGreaterThan(0);
-    const submit = screen.getByRole("button", { name: /Create deposit request/i });
+    const submit = primaryCta();
     expect(submit).toBeDisabled();
   });
 
@@ -407,7 +415,7 @@ describe("BridgeCard — rolling 24h quota states (backend 2026-08-22 workflow)"
     renderWithQueryClient(<BridgeCard />);
     await screen.findByText("24-hour bridge capacity reached for this direction.");
 
-    await user.click(screen.getByRole("radio", { name: /GLC on Solana.*GLC L1/i }));
+    await selectNetwork(user, "Source network", /Solana/);
 
     await waitFor(() =>
       expect(
@@ -441,11 +449,11 @@ describe("BridgeCard — rolling 24h quota states (backend 2026-08-22 workflow)"
 
     expect(
       await screen.findByText(
-        /exceeds the remaining 24-hour bridge capacity for this direction \(5,000 GLC remaining\)/,
+        /exceeds the remaining 24-hour bridge capacity for this route \(5,000 GLC remaining\)/,
       ),
     ).toBeInTheDocument();
     expect(screen.getByLabelText(/Amount in GLC/i)).toHaveValue("9000");
-    const submit = screen.getByRole("button", { name: /Create deposit request/i });
+    const submit = primaryCta();
     expect(submit).toBeDisabled();
   });
 

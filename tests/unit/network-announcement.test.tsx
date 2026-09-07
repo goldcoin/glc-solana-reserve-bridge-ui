@@ -202,7 +202,7 @@ describe("isolation from live bridge state", () => {
     expect(banner()).toBeInTheDocument();
   });
 
-  it("leaves the operational bar intact beside it", () => {
+  it("leaves the operational bar intact beside it", async () => {
     renderWithQueryClient(
       <>
         <BridgeStatusBar initialStatus={status()} />
@@ -211,7 +211,9 @@ describe("isolation from live bridge state", () => {
     );
 
     expect(screen.getByText("Operational")).toBeInTheDocument();
-    expect(screen.getByText("Both directions are available.")).toBeInTheDocument();
+    // Awaited, not synchronous: the route count comes from `GET /chains`,
+    // which — unlike the status snapshot — is not hydrated server-side.
+    expect(await screen.findByText("2 of 6 routes available.")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "View status" })).toHaveAttribute(
       "href",
       "/status",

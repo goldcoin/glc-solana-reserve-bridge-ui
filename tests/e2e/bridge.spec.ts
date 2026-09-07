@@ -1,5 +1,6 @@
 import { test, expect } from "@playwright/test";
 import AxeBuilder from "@axe-core/playwright";
+import { primaryCta, selectNetwork } from "./network-selection.helpers";
 
 /**
  * The bridge form, end to end, against the mock backend's default
@@ -21,7 +22,7 @@ test.describe("bridge form", () => {
     await expect(page.getByLabel(/Amount in GLC/i)).toBeVisible();
     await expect(page.getByLabel("Solana recipient address")).toBeVisible();
 
-    await page.getByRole("radio", { name: /GLC on Solana.*GLC L1/i }).click();
+    await selectNetwork(page, "Source network", /Solana/);
     await expect(page.getByLabel("Goldcoin destination address")).toBeVisible();
   });
 
@@ -31,12 +32,14 @@ test.describe("bridge form", () => {
     await page.goto("/bridge");
     await page.getByLabel(/Amount in GLC/i).fill("1000");
 
-    await expect(page.getByText("You bridge")).toBeVisible();
-    await expect(page.getByText("Bridge fee (3%)")).toBeVisible();
+    // The route summary carries the rate and the fee amount; the TO panel
+    // carries what arrives. Both are the backend's own figures.
+    await expect(page.getByText("Bridge fee")).toBeVisible();
+    await expect(page.getByText(/3% · 30\.00/)).toBeVisible();
     await expect(page.getByText("You receive")).toBeVisible();
-    await expect(page.getByText(/1,000\.00/)).toBeVisible();
-    await expect(page.getByText(/−30\.00/)).toBeVisible();
-    await expect(page.getByText(/970\.00/)).toBeVisible();
+    await expect(page.getByText(/970\.00/).first()).toBeVisible();
+    // The typed amount is never reformatted under the cursor.
+    await expect(page.getByLabel(/Amount in GLC/i)).toHaveValue("1000");
   });
 
   test("publishes min/max limits from the backend rather than hardcoding them", async ({
@@ -48,7 +51,7 @@ test.describe("bridge form", () => {
 
   test("the primary action is never dead without a stated reason", async ({ page }) => {
     await page.goto("/bridge");
-    const cta = page.getByRole("button", { name: /Create deposit request/i });
+    const cta = primaryCta(page);
     await expect(cta).toBeVisible();
     await expect(cta).toBeDisabled();
     await expect(cta).toHaveAccessibleDescription(/.+/);
@@ -63,7 +66,7 @@ test.describe("bridge form", () => {
       .getByLabel("Solana recipient address")
       .fill("9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM");
 
-    const cta = page.getByRole("button", { name: /Create deposit request/i });
+    const cta = primaryCta(page);
     await expect(cta).toBeEnabled();
     await cta.click();
 

@@ -1,8 +1,10 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useQuery, type UseQueryResult } from "@tanstack/react-query";
 import { numberToHex, type Address, type EIP1193Provider, type Hex } from "viem";
 import { evmSendError } from "@/lib/api/errors";
+import { fetchRobinhoodGlcBalance, type EvmTokenBalance } from "./balance";
 import { isEvmAddress } from "./address";
 import { robinhoodDeployment, type RobinhoodDeployment } from "./config";
 import {
@@ -278,4 +280,73 @@ export function useRobinhoodDeposit(wallet: EvmWalletState): {
   );
 
   return { deposit };
+}
+
+/** Balance polling cadence, matching the Solana wallet's. */
+const BALANCE_POLL_MS = 30_000;
+
+export const evmWalletQueryKeys = {
+  /** Every EVM balance query, for invalidating them together. See `walletQueryKeys.balances`. */
+  balances: () => ["evm", "balance"] as const,
+  /**
+   * Keyed by chain, token and account together.
+   *
+   * All three matter: switching networks, switching accounts, or a
+   * deployment change must each produce a different cache entry, so a
+   * balance from one context can never be shown in another. That is the
+   * cache-level half of "never retain a balance from the previous chain";
+   * the component half is that a non-Robinhood source reads this hook's
+   * result not at all.
+   */
+  glcBalance: (
+    deployment: RobinhoodDeployment | null,
+    chainId: number | null,
+    account: string | null,
+  ) =>
+    [
+      "evm",
+      "balance",
+      "glc",
+      deployment?.chainId ?? null,
+      deployment?.tokenAddress ?? null,
+      deployment?.rpcUrl ?? null,
+      chainId,
+      account,
+    ] as const,
+} as const;
+
+/**
+ * The connected EVM wallet's GLC balance.
+ *
+ * Disabled unless a deployment is configured AND a wallet is connected AND
+ * that wallet is on the deployment's chain. Each of those is a real
+ * refusal rather than a loading state:
+ *
+ * - no deployment (today's state everywhere) — there is no token address to
+ *   read, so nothing is attempted;
+ * - no wallet — there is no account to read a balance FOR, and asking would
+ *   mean prompting someone who has not opted in to anything;
+ * - wrong chain — a balance read against the wrong network would return a
+ *   real number for the wrong asset, which is worse than no number.
+ */
+export function useRobinhoodGlcBalance(
+  wallet: EvmWalletState,
+): UseQueryResult<EvmTokenBalance> {
+  const { deployment, address, chainId, onExpectedChain } = wallet;
+
+  return useQuery({
+    queryKey: evmWalletQueryKeys.glcBalance(deployment, chainId, address),
+    enabled: Boolean(deployment) && Boolean(address) && onExpectedChain,
+    refetchInterval: BALANCE_POLL_MS,
+    // A failed balance read is reported as unavailable rather than retried
+    // into a long spinner: the form has a correct answer for "we do not
+    // know", and it is better than a stale one.
+    retry: false,
+    queryFn: async () => {
+      if (!deployment || !address) {
+        throw new Error("Robinhood Chain is not configured, or no wallet is connected");
+      }
+      return fetchRobinhoodGlcBalance({ deployment, account: address });
+    },
+  });
 }

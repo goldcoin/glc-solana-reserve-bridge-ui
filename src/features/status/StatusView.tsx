@@ -3,21 +3,23 @@
 import { Activity, HeartPulse } from "lucide-react";
 import { Card, ErrorState, Skeleton, StatusBadge, TokenAmount } from "@/components/ui";
 import { useBridgeStatus, useChains, useHealth, useReserve } from "@/lib/query/hooks";
-import { directionAvailabilityStatus, systemStatus } from "@/lib/status";
+import {
+  directionAvailabilityStatus,
+  routeAvailabilityStatus,
+  systemStatus,
+} from "@/lib/status";
 import type { DirectionAvailability } from "@/lib/status";
 import {
   directionGateState,
   directions,
+  displayDescriptorFor,
   routeAvailability,
-  routeDisplay,
   GOLDCOIN_GLC,
-  ROUTE_PRESENTATION_ORDER,
   SOLANA_GLC,
 } from "@/lib/bridge";
 import type { DirectionGateState, SolanaGovernedRoute } from "@/lib/bridge";
 import type { ChainsViewDto } from "@/lib/api/schemas/chains";
 import type { BridgeStatusDto } from "@/lib/api/schemas/status";
-import type { Route } from "@/lib/api/schemas/common";
 import { clampAtomicAtZero } from "@/lib/api/schemas/common";
 
 export function StatusView() {
@@ -178,14 +180,21 @@ function DirectionStatusCard({
  * Every route the backend knows about, and whether it is open — read
  * straight from `GET /chains`.
  *
+ * # Iterated from the response, not from a local list
+ *
+ * The rows are whatever `/chains` returned. A route — or a whole network —
+ * the backend adds later appears here with no frontend deploy, which is
+ * the same property that lets the bridge form scale. Networks this build
+ * cannot describe still render, by their backend id, rather than being
+ * dropped from a list a user is using to check what is supported.
+ *
  * # Why this carries no numbers
  *
  * The two cards above pair a direction with its destination reserve's
- * capacity, because `GET /reserve` publishes that figure for the Goldcoin
- * and Solana reserves. It publishes NOTHING for the Robinhood reserve: the
+ * capacity, because `GET /reserve` publishes that for the Goldcoin and
+ * Solana reserves. It publishes NOTHING for the Robinhood reserve: the
  * ledger has a `RobinhoodReserve` row, but no public endpoint exposes its
- * capacity, its pause flag, or a per-route availability boolean for
- * either Robinhood route.
+ * capacity, its pause flag, or a per-route availability boolean.
  *
  * So this card states availability and stops. It does not estimate a
  * capacity, borrow the Solana figure, or render an empty placeholder that
@@ -205,33 +214,31 @@ function RouteAvailabilityCard({
         <Activity aria-hidden="true" className="text-ink-500 size-4" />
         <h2 className="text-heading-3">Routes</h2>
       </div>
-      {isPending ? (
+      {isPending || !chains ? (
         <Skeleton className="h-24 w-full" />
       ) : (
         <ul className="flex flex-col gap-3">
-          {ROUTE_PRESENTATION_ORDER.map((route: Route) => {
-            const display = routeDisplay(route);
-            const state = routeAvailability(chains, route);
+          {chains.routes.map((view) => {
+            const source = displayDescriptorFor(view.source_chain);
+            const destination = displayDescriptorFor(view.destination_chain);
+            const state = routeAvailability(chains, view.id);
             return (
               <li
-                key={route}
+                key={view.id}
                 className="border-ink-100 flex flex-col gap-1 border-b pb-3 last:border-b-0 last:pb-0 sm:flex-row sm:items-start sm:justify-between sm:gap-4"
               >
                 <div className="min-w-0">
-                  <p className="text-body-sm text-ink-900 font-medium">{display.label}</p>
-                  <p className="text-body-sm text-ink-500">
-                    {display.from.chain.name} → {display.to.chain.name}
+                  <p className="text-body-sm text-ink-900 font-medium">
+                    {source.name} → {destination.name}
                   </p>
+                  <p className="text-body-sm text-ink-500">{view.id}</p>
                 </div>
                 <div className="sm:max-w-[60%] sm:text-right">
-                  <StatusBadge
-                    status={
-                      state.kind === "open"
-                        ? directionAvailabilityStatus.available
-                        : directionAvailabilityStatus.paused
-                    }
-                    size="sm"
-                  />
+                  {/* The four availability kinds have their own status
+                      descriptors: "Not implemented" is neutral rather than
+                      danger, because nothing is wrong and nothing is
+                      waiting to be switched back on. */}
+                  <StatusBadge status={routeAvailabilityStatus[state.kind]} size="sm" />
                   {state.kind !== "open" && (
                     <p className="text-body-sm text-ink-500 mt-1 whitespace-pre-line">
                       {state.kind === "unimplemented"

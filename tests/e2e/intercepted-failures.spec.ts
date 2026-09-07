@@ -2,6 +2,7 @@ import { test, expect } from "@playwright/test";
 import { INTERCEPTED_API_ORIGIN } from "../../playwright.config";
 import { mockHappyBackend, respondJson } from "./intercepted-helpers";
 import * as fixtures from "../../src/lib/api/mock/fixtures";
+import { primaryCta, selectNetwork } from "./network-selection.helpers";
 
 /**
  * Every scenario here runs against a real NEXT_PUBLIC_BRIDGE_API_MODE=http
@@ -50,9 +51,7 @@ test.describe("backend failure and unhappy-path scenarios (real HTTP client)", (
 
     await page.goto("/bridge");
     await expect(page.getByText(/is currently paused\./i).first()).toBeVisible();
-    await expect(
-      page.getByRole("button", { name: /Create deposit request/i }),
-    ).toBeDisabled();
+    await expect(primaryCta(page)).toBeDisabled();
   });
 
   test("quota exhausted: exact approved message, submit disabled, opposite direction usable", async ({
@@ -70,9 +69,7 @@ test.describe("backend failure and unhappy-path scenarios (real HTTP client)", (
     await expect(
       page.getByText(/New transfers are temporarily unavailable\./).first(),
     ).toBeVisible();
-    await expect(
-      page.getByRole("button", { name: /Create deposit request/i }),
-    ).toBeDisabled();
+    await expect(primaryCta(page)).toBeDisabled();
 
     // No automatic-reset promises anywhere on the page.
     const body = (await page.textContent("body")) ?? "";
@@ -81,7 +78,7 @@ test.describe("backend failure and unhappy-path scenarios (real HTTP client)", (
     expect(body).not.toMatch(/resets?\s+(at|in)/i);
 
     // The opposite (healthy) direction stays usable.
-    await page.getByRole("radio", { name: /GLC on Solana.*GLC L1/i }).click();
+    await selectNetwork(page, "Source network", /Solana/);
     await expect(
       page.getByText("24-hour bridge capacity reached for this direction.").first(),
     ).not.toBeVisible();
@@ -136,7 +133,7 @@ test.describe("backend failure and unhappy-path scenarios (real HTTP client)", (
     await page
       .getByLabel("Solana recipient address")
       .fill("9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM");
-    await page.getByRole("button", { name: /Create deposit request/i }).click();
+    await primaryCta(page).click();
 
     await expect(
       page.getByRole("alert").filter({ hasText: "temporarily" }),
@@ -171,7 +168,7 @@ test.describe("backend failure and unhappy-path scenarios (real HTTP client)", (
     await page
       .getByLabel("Solana recipient address")
       .fill("9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM");
-    await page.getByRole("button", { name: /Create deposit request/i }).click();
+    await primaryCta(page).click();
 
     await expect(
       page.getByRole("alert").filter({ hasText: "Bridge capacity reached" }),
@@ -193,16 +190,15 @@ test.describe("backend failure and unhappy-path scenarios (real HTTP client)", (
     await page.goto("/bridge");
     await page.getByLabel(/Amount in GLC/i).fill("1000");
 
-    // The quote panel shows the failure through the same three-part error
-    // formula as everywhere else — never a stale or guessed quote. "You
-    // bridge" is also the amount field's own permanent label now, so the
-    // breakdown-only rows are what prove no quote is being shown.
+    // The summary keeps its rows — a layout that collapses on failure is
+    // its own kind of confusing — but every figure reads as absent. What
+    // must never appear is a number: no stale quote, and nothing this app
+    // derived on its own.
     await expect(page.getByText(/could not complete that request/i)).toBeVisible();
-    await expect(page.getByText(/Bridge fee/)).not.toBeVisible();
-    await expect(page.getByText("You receive")).not.toBeVisible();
-    await expect(
-      page.getByRole("button", { name: /Create deposit request/i }),
-    ).toBeDisabled();
+    await expect(page.getByText("You receive")).toBeVisible();
+    await expect(page.getByText(/3%/)).toHaveCount(0);
+    await expect(page.getByText(/970\.00/)).toHaveCount(0);
+    await expect(primaryCta(page)).toBeDisabled();
   });
 
   test("a transfer lookup for an unknown id shows not-found, never a fabricated status", async ({

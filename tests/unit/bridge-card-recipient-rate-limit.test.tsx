@@ -1,7 +1,7 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { renderWithQueryClient } from "./test-utils";
+import { primaryCta, renderWithQueryClient, selectNetwork } from "./test-utils";
 import * as fixtures from "@/lib/api/mock/fixtures";
 import { encodeBase58Check } from "@/lib/bridge/glc-address";
 import { RECIPIENT_RATE_LIMIT_TITLE } from "@/lib/bridge/recipient-rate-limit";
@@ -91,6 +91,11 @@ vi.mock("@/lib/solana", () => ({
   useWalletConnection: () => walletConnection,
   useDepositToReserve: () => ({ capability: depositCapability, deposit: depositFn }),
   isValidAddress: (value: string) => /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(value),
+  // The FROM panel reads a source balance; with no wallet connected the
+  // hook short-circuits before the query, so a minimal stub is enough.
+  useTokenBalance: () => ({ isPending: true, isError: false, data: undefined }),
+  isTokenBalanceAvailable: () => true,
+  walletQueryKeys: { balances: () => ["solana", "balance"] },
 }));
 
 function eligibilityFor(address: string, eligible: boolean) {
@@ -132,18 +137,18 @@ async function fillSolToGlcForm(
   user: ReturnType<typeof userEvent.setup>,
   address: string,
 ) {
-  // A route is unselectable until `GET /chains` has answered — availability
-  // is never assumed, so the control is genuinely disabled until then.
-  const solToGlc = screen.getByRole("radio", { name: /GLC on Solana.*GLC L1/i });
-  await waitFor(() => expect(solToGlc).toBeEnabled());
-  await user.click(solToGlc);
+  // Networks are chosen in the two selectors; the route is derived from
+  // the pair. `selectNetwork` waits for `GET /chains` to answer first —
+  // availability is never assumed, so the control is genuinely disabled
+  // until then.
+  await selectNetwork(user, "Source network", /Solana/);
   await waitFor(() => expect(getLimits).toHaveBeenCalled());
   await user.type(screen.getByLabelText(/Amount in GLC/i), "500");
   await user.type(screen.getByLabelText("Goldcoin destination address"), address);
 }
 
 function submitButton() {
-  return screen.getByRole("button", { name: /Deposit from wallet/i });
+  return primaryCta();
 }
 
 beforeEach(() => {

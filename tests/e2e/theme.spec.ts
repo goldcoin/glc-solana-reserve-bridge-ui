@@ -1,5 +1,6 @@
 import { test, expect, type Page } from "@playwright/test";
 import AxeBuilder from "@axe-core/playwright";
+import { primaryCta } from "./network-selection.helpers";
 
 /**
  * The theme control, in a real browser.
@@ -271,7 +272,7 @@ test.describe("dark mode across the application", () => {
     await page
       .getByLabel("Solana recipient address")
       .fill("9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM");
-    await page.getByRole("button", { name: /Create deposit request/i }).click();
+    await primaryCta(page).click();
     await expect(page.getByRole("heading", { name: /Send your deposit/i })).toBeVisible();
 
     expect((await theme(page)).dark).toBe(true);

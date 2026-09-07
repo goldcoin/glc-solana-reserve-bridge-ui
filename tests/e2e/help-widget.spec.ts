@@ -1,5 +1,6 @@
 import { test, expect, type Locator, type Page } from "@playwright/test";
 import AxeBuilder from "@axe-core/playwright";
+import { primaryCta } from "./network-selection.helpers";
 
 /**
  * The floating help widget, in a real browser, at both viewports the
@@ -214,7 +215,7 @@ test.describe("layout", () => {
     for (const control of [
       page.getByLabel(/Amount in GLC/i),
       page.getByLabel("Solana recipient address"),
-      page.getByRole("button", { name: /Create deposit request/i }),
+      primaryCta(page),
     ]) {
       expect(overlaps(help, await boxOf(control))).toBe(false);
     }
@@ -241,7 +242,7 @@ test.describe("layout", () => {
     for (const control of [
       page.getByLabel(/Amount in GLC/i),
       page.getByLabel("Solana recipient address"),
-      page.getByRole("button", { name: /Create deposit request/i }),
+      primaryCta(page),
     ]) {
       controls.push(await boxOf(control));
     }
@@ -269,7 +270,7 @@ test.describe("layout", () => {
       .getByLabel("Solana recipient address")
       .fill("9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM");
 
-    const cta = page.getByRole("button", { name: /Create deposit request/i });
+    const cta = primaryCta(page);
     await expect(cta).toBeEnabled();
 
     // A trial click runs every actionability check — including "is something

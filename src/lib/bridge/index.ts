@@ -19,8 +19,9 @@ export {
 export {
   isRouteOpen,
   routeAvailability,
-  ROUTE_PRESENTATION_ORDER,
+  routeAvailabilitySummary,
   type RouteAvailability,
+  type RouteAvailabilitySummary,
 } from "./route-availability";
 export {
   canonicalToRobinhoodRaw,
@@ -79,3 +80,29 @@ export {
   QUOTA_PAUSED_NEXT,
 } from "./direction-state";
 export type { DirectionGateState, SolanaGovernedRoute } from "./direction-state";
+
+export {
+  CHAIN_DESCRIPTORS,
+  descriptorFor,
+  displayDescriptorFor,
+  GOLDCOIN_GLC as GOLDCOIN_GLC_TOKEN,
+  type ChainFamily,
+} from "./chain-registry";
+
+export {
+  destinationsFor,
+  isDefinedPair,
+  resolveRoute,
+  routeForPair,
+  sourceChainIds,
+  type RouteResolution,
+} from "./route-resolution";
+
+export {
+  adapterFor,
+  type AddressCheck,
+  type ChainAdapter,
+  type FundingKind,
+} from "./chain-adapters";
+
+export { maximumBridgeableAmount, type MaximumBridgeableInput } from "./max-amount";

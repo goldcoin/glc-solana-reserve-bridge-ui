@@ -168,7 +168,10 @@
   /* --- Layout containers (E4) -------------------------------------------- */
   --container-page: 1120px;
   --container-wide: 1200px; /* explorer tables */
-  --container-card: 520px; /* bridge card */
+  --container-card: 680px; /* bridge card — two stacked network panels need
+                              more measure than the old single-column form:
+                              at 520px the route summary's four columns
+                              collided and every figure wrapped. */
   --container-prose: 680px; /* long-form, 68-72ch measure */
   --container-modal: 480px;
 
