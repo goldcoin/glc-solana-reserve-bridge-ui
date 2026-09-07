@@ -124,13 +124,90 @@ export const httpUrlSchema = z.url().refine((value) => /^https?:\/\//i.test(valu
   error: "must be an http or https URL",
 });
 
-/** The two chains this bridge spans. */
-export const chainSchema = z.enum(["goldcoin", "solana"]);
+/**
+ * Every chain this bridge knows the NAME of — `Chain` in
+ * `service/src/routes.rs`. Knowing a chain's name says nothing about
+ * whether any route to it is usable; that is `GET /chains`' job alone.
+ */
+export const chainSchema = z.enum(["goldcoin", "solana", "robinhood"]);
 export type Chain = z.infer<typeof chainSchema>;
 
-/** Transfer direction, exactly as the backend's `Direction` enum names it. */
-export const directionSchema = z.enum(["GlcToSol", "SolToGlc"]);
-export type Direction = z.infer<typeof directionSchema>;
+/**
+ * The complete route vocabulary — `Route` in `service/src/routes.rs`,
+ * all six spellings.
+ *
+ * # Parsing a route is not the same as being able to use one
+ *
+ * This schema exists so a response naming ANY route the backend can
+ * produce parses cleanly. It is deliberately permissive, and it is
+ * deliberately not an availability signal: `SolToRhn`/`RhnToGlc` and
+ * every other value here parse identically whether the route is open,
+ * closed, or structurally non-executable.
+ *
+ * Availability comes from ONE place, `GET /chains`' per-route `enabled`
+ * flag (see `./chains`), which is the same `RouteGate` verdict
+ * `POST /quote` and `POST /transfers` enforce. This UI must never
+ * re-derive it from its own configuration or from the shape of this
+ * enum — that is what keeps opening a route a backend-only change.
+ *
+ * # Why it must accept routes this UI cannot start
+ *
+ * Before this widened, `directionSchema` accepted exactly `GlcToSol` and
+ * `SolToGlc`. A single `GlcToRhn` row anywhere in `GET /transfers` or
+ * `GET /explorer/events` would then fail Zod and take down the entire
+ * page rather than one row — so the UI would break the moment a
+ * Robinhood route was enabled backend-side, with no frontend deploy
+ * involved. Parsing is now total over the backend's own enum.
+ */
+export const routeSchema = z.enum([
+  "GlcToSol",
+  "SolToGlc",
+  "GlcToRhn",
+  "RhnToGlc",
+  "SolToRhn",
+  "RhnToSol",
+]);
+export type Route = z.infer<typeof routeSchema>;
+
+/**
+ * The wire spelling of a transfer's route, as it appears in RESPONSES
+ * (`TransferView::direction`, `ExplorerEvent::direction`, `QuoteOutput::
+ * direction`). Identical to {@link routeSchema} — the backend's
+ * `QuoteInput::direction` field "keeps its name for wire compatibility
+ * but is now parsed as a `Route`" (`service/src/api.rs`), so the two
+ * vocabularies are one and the same on the wire.
+ *
+ * Kept as its own name because that is what the wire field is called.
+ */
+export const directionSchema = routeSchema;
+export type Direction = Route;
+
+/**
+ * The four routes that have backend SETTLEMENT MACHINERY — exactly the
+ * routes for which `Route::as_direction()` returns `Some`, mirrored by
+ * `GET /chains`' `implemented: true`.
+ *
+ * This is the narrow vocabulary for anything the UI can INITIATE: a
+ * quote request, a create-transfer, a direction descriptor. `SolToRhn`
+ * and `RhnToSol` are excluded at the type level, so no code path can
+ * hand either to an action — matching the backend, where those two
+ * routes have no `Direction` value to call a settlement function with.
+ *
+ * Still not an availability check. An implemented route is very often a
+ * closed one: both Robinhood routes ship disabled.
+ */
+export const settlementRouteSchema = z.enum([
+  "GlcToSol",
+  "SolToGlc",
+  "GlcToRhn",
+  "RhnToGlc",
+]);
+export type SettlementRoute = z.infer<typeof settlementRouteSchema>;
+
+/** Whether a wire route is one the UI could ever initiate. */
+export function isSettlementRoute(route: Route): route is SettlementRoute {
+  return settlementRouteSchema.safeParse(route).success;
+}
 
 /**
  * `/reserves/history` uses a different spelling for the same two reserves —

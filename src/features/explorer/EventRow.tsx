@@ -2,7 +2,7 @@ import Link from "next/link";
 import { ArrowRight } from "lucide-react";
 import { StatusBadge } from "@/components/ui";
 import { requestStateDescriptor } from "@/lib/status";
-import { directions, transitionLabel } from "@/lib/bridge";
+import { routeDisplay, transitionLabel } from "@/lib/bridge";
 import type { ExplorerEventDto } from "@/lib/api/schemas/explorer";
 
 /**
@@ -17,7 +17,7 @@ import type { ExplorerEventDto } from "@/lib/api/schemas/explorer";
  * a neutral badge in THIS row instead of taking the page down.
  */
 export function EventRow({ event }: { event: ExplorerEventDto }) {
-  const descriptor = directions[event.direction];
+  const descriptor = routeDisplay(event.direction);
   const at = new Date(event.at * 1000);
   const transition = transitionLabel(event.from_state, event.to_state);
 

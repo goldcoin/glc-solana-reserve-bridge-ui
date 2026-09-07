@@ -50,6 +50,7 @@ const SOL_TO_GLC_MINIMUM_INPUT = "102.061856";
 const SOL_TO_GLC_JUST_BELOW_MINIMUM_INPUT = "102.061855";
 
 const getStatus = vi.fn();
+const getChains = vi.fn();
 const getLimits = vi.fn();
 const getReserve = vi.fn();
 const getQuote = vi.fn();
@@ -59,6 +60,7 @@ const listTransfers = vi.fn();
 vi.mock("@/lib/api", async () => ({
   bridgeApi: {
     getStatus: (...args: unknown[]) => getStatus(...args),
+    getChains: (...args: unknown[]) => getChains(...args),
     getLimits: (...args: unknown[]) => getLimits(...args),
     getReserve: (...args: unknown[]) => getReserve(...args),
     getQuote: (...args: unknown[]) => getQuote(...args),
@@ -161,6 +163,10 @@ beforeEach(() => {
   walletConnection.address = WALLET_ADDRESS;
   walletConnection.canSign = true;
   getStatus.mockResolvedValue(fixtures.statusFixture(() => new Date()));
+  // The route registry every gate now consults. The default fixture is
+  // the real shipping state: both legacy routes open, both Robinhood
+  // routes implemented-but-disabled, the Solana<->Robinhood pair inert.
+  getChains.mockResolvedValue(fixtures.chainsFixture(() => new Date()));
   getLimits.mockResolvedValue(fixtures.limitsFixture());
   getReserve.mockResolvedValue(fixtures.reserveFixture());
   depositCapability.mockReturnValue({ available: true });
@@ -198,7 +204,11 @@ async function typeSolToGlcAmount(
   amount: string,
 ) {
   renderWithQueryClient(<BridgeCard />);
-  await user.click(screen.getByRole("radio", { name: /GLC on Solana.*GLC L1/i }));
+  // A route is unselectable until `GET /chains` has answered — availability
+  // is never assumed, so the control is genuinely disabled until then.
+  const solToGlc = screen.getByRole("radio", { name: /GLC on Solana.*GLC L1/i });
+  await waitFor(() => expect(solToGlc).toBeEnabled());
+  await user.click(solToGlc);
   await waitFor(() => expect(getLimits).toHaveBeenCalled());
   await user.type(screen.getByLabelText(/Amount in GLC/i), amount);
   await user.type(

@@ -13,7 +13,7 @@ import {
 import { useTransfer } from "@/lib/query/hooks";
 import { requestStateStatus } from "@/lib/status";
 import {
-  directions,
+  routeDisplay,
   isFailureState,
   isManualReview,
   isRefundState,
@@ -21,7 +21,7 @@ import {
 } from "@/lib/bridge";
 import type { RefundState } from "@/lib/bridge";
 import type { TransferViewDto } from "@/lib/api/schemas/transfer";
-import { goldcoinTxUrl, solanaTxUrl } from "@/lib/config/links";
+import { chainTxUrl } from "@/lib/config/links";
 import { GOLDCOIN_DECIMALS } from "@/lib/config/env";
 import { TransferStepper } from "./TransferStepper";
 
@@ -69,14 +69,16 @@ export function TransferDetail({
   if (query.isError) return <ErrorState error={query.error} />;
 
   const transfer = query.data;
-  const descriptor = directions[transfer.direction];
+  const display = routeDisplay(transfer.direction);
+  const sourceChain = display.from.chain.id;
+  const destinationChain = display.to.chain.id;
 
   return (
     <Card variant="raised" padding="lg">
       <div className="mb-5 flex flex-wrap items-start justify-between gap-3">
         <div>
           <h1 className="text-heading-2">
-            {descriptor.label} <span className="text-ink-500">#{transfer.id}</span>
+            {display.label} <span className="text-ink-500">#{transfer.id}</span>
           </h1>
           <div className="text-body-sm text-ink-500 mt-1 flex flex-wrap items-center gap-x-1 gap-y-1">
             <span>Created {new Date(transfer.created_at * 1000).toLocaleString()}</span>
@@ -157,9 +159,7 @@ export function TransferDetail({
             href={
               readOnly
                 ? undefined
-                : ((transfer.direction === "GlcToSol"
-                    ? goldcoinTxUrl(transfer.source_txid)
-                    : solanaTxUrl(transfer.source_txid)) ?? undefined)
+                : (chainTxUrl(sourceChain, transfer.source_txid) ?? undefined)
             }
           />
         )}
@@ -173,9 +173,7 @@ export function TransferDetail({
                 : // A refund travels back down the SOURCE chain — the one the
                   // deposit arrived on — which is the opposite of the
                   // destination transaction below.
-                  ((transfer.direction === "GlcToSol"
-                    ? goldcoinTxUrl(transfer.refund.refund_txid)
-                    : solanaTxUrl(transfer.refund.refund_txid)) ?? undefined)
+                  (chainTxUrl(sourceChain, transfer.refund.refund_txid) ?? undefined)
             }
           />
         )}
@@ -186,9 +184,7 @@ export function TransferDetail({
             href={
               readOnly
                 ? undefined
-                : ((transfer.direction === "GlcToSol"
-                    ? solanaTxUrl(transfer.destination_txid)
-                    : goldcoinTxUrl(transfer.destination_txid)) ?? undefined)
+                : (chainTxUrl(destinationChain, transfer.destination_txid) ?? undefined)
             }
           />
         )}
@@ -266,6 +262,13 @@ function SettlementAmounts({ transfer }: { transfer: TransferViewDto }) {
  */
 function RefundAmounts({ transfer }: { transfer: TransferViewDto }) {
   const refund = transfer.refund;
+  // `TransferView.refund` is deliberately absent for `RhnToGlc`: that
+  // deposit refunds on the Robinhood side, from a different table in a
+  // different unit, and the backend reports no refund view at all rather
+  // than mislabelling it as one of the other two (`BridgeApi::refund_view`).
+  // Absent-by-design and absent-because-old-backend look identical here, so
+  // the one we can identify gets a real explanation.
+  const robinhoodSourced = transfer.direction === "RhnToGlc";
   const requested = transfer.gross_amount_atomic;
   const deposited = refund?.observed_amount_atomic ?? null;
 
@@ -318,6 +321,19 @@ function RefundAmounts({ transfer }: { transfer: TransferViewDto }) {
           )}
         </dd>
       </div>
+
+      {refund === null && robinhoodSourced && (
+        <div className="col-span-3">
+          <dt className="sr-only">Why the refund amount is not shown</dt>
+          <dd className="text-body-sm text-ink-500">
+            A Robinhood Network deposit is refunded on Robinhood Network, from the custody
+            contract that holds it — a different chain and a different record from the two
+            refund paths this page can read. The bridge does not publish those figures
+            here yet, so this page states the refund&apos;s status and stops there rather
+            than showing a number from somewhere else.
+          </dd>
+        </div>
+      )}
 
       <div className="col-span-3">
         <dt className="sr-only">Bridge fee</dt>

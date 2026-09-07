@@ -7,7 +7,7 @@ import type {
   ListReserveHistoryParams,
   ListTransfersParams,
 } from "@/lib/api";
-import type { Direction } from "@/lib/api/schemas/common";
+import type { SettlementRoute } from "@/lib/api/schemas/common";
 import type {
   BridgeStatusDto,
   PublicHealthDto,
@@ -15,6 +15,7 @@ import type {
   TransferLimitsDto,
 } from "@/lib/api/schemas/status";
 import type { BridgeStatsDto } from "@/lib/api/schemas/stats";
+import type { ChainsViewDto } from "@/lib/api/schemas/chains";
 import type { ExplorerEventListDto } from "@/lib/api/schemas/explorer";
 import type { ReserveHistoryListDto } from "@/lib/api/schemas/reserves";
 import type { QuoteOutputDto } from "@/lib/api/schemas/quote";
@@ -41,6 +42,22 @@ export function useBridgeStatus(
     queryKey: queryKeys.status(),
     queryFn: ({ signal }) => bridgeApi.getStatus(signal),
     refetchInterval: pollIntervals.status,
+    ...(initialData ? { initialData } : {}),
+  });
+}
+
+/**
+ * The chain/route registry — the authority on route availability.
+ *
+ * Nothing else in this app may answer "is this route usable". A failed or
+ * still-loading read means availability is UNKNOWN, which every consumer
+ * treats as closed (`routeAvailability`'s `unknown` case), never as open.
+ */
+export function useChains(initialData?: ChainsViewDto): UseQueryResult<ChainsViewDto> {
+  return useQuery({
+    queryKey: queryKeys.chains(),
+    queryFn: ({ signal }) => bridgeApi.getChains(signal),
+    refetchInterval: pollIntervals.chains,
     ...(initialData ? { initialData } : {}),
   });
 }
@@ -93,7 +110,7 @@ export function useStats(initialData?: BridgeStatsDto): UseQueryResult<BridgeSta
  * entered.
  */
 export function useQuote(
-  direction: Direction,
+  direction: SettlementRoute,
   /** Exact canonical atomic amount as a decimal string; "0" means none. */
   grossAmount: string,
 ): UseQueryResult<QuoteOutputDto> {

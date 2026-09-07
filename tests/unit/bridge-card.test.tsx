@@ -13,6 +13,7 @@ import { BridgeCard } from "@/features/bridge/BridgeCard";
  */
 
 const getStatus = vi.fn();
+const getChains = vi.fn();
 const getLimits = vi.fn();
 const getReserve = vi.fn();
 const getQuote = vi.fn();
@@ -23,6 +24,7 @@ const getSolToGlcRecipientEligibility = vi.fn();
 vi.mock("@/lib/api", async () => ({
   bridgeApi: {
     getStatus: (...args: unknown[]) => getStatus(...args),
+    getChains: (...args: unknown[]) => getChains(...args),
     getLimits: (...args: unknown[]) => getLimits(...args),
     getReserve: (...args: unknown[]) => getReserve(...args),
     getQuote: (...args: unknown[]) => getQuote(...args),
@@ -96,6 +98,10 @@ beforeEach(() => {
   walletConnection.status = "disconnected";
   walletConnection.address = null;
   getStatus.mockResolvedValue(fixtures.statusFixture(() => new Date()));
+  // The route registry every gate now consults. The default fixture is
+  // the real shipping state: both legacy routes open, both Robinhood
+  // routes implemented-but-disabled, the Solana<->Robinhood pair inert.
+  getChains.mockResolvedValue(fixtures.chainsFixture(() => new Date()));
   getLimits.mockResolvedValue(fixtures.limitsFixture());
   getReserve.mockResolvedValue(fixtures.reserveFixture());
   getQuote.mockResolvedValue(baseQuote());
@@ -271,9 +277,13 @@ describe("BridgeCard — transfer submission", () => {
     expect(screen.getByText(/Send exactly/i)).toBeInTheDocument();
     expect(screen.getByText(/1,000\.00/)).toBeInTheDocument();
     expect(screen.queryByText(/OP_RETURN/i)).not.toBeInTheDocument();
+    // `route` is sent explicitly even though `GlcToSol` is the backend's
+    // own default for an absent field: what a request creates is stated by
+    // the caller rather than inherited from a server-side default.
     expect(createTransfer).toHaveBeenCalledWith({
       amount_atomic: "100000000000",
       recipient: VALID_SOLANA_ADDRESS,
+      route: "GlcToSol",
     });
   });
 

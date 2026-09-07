@@ -1,4 +1,5 @@
 import { requestStateSchema, type RequestState } from "@/lib/api/schemas/transfer";
+import type { Route } from "@/lib/api/schemas/common";
 
 /**
  * Classification of the real `RequestState` wire enum
@@ -75,16 +76,25 @@ export function isUnexercisedState(state: RequestState): boolean {
 }
 
 /**
- * The ordered "happy path" sequence for a direction, used to render a
- * stepper. `SolToGlc` skips `Confirming` — it folds directly to
- * `SourceFinalized` with no confirmation ramp
- * (`TransferView.required_source_confirmations` is always null for it).
+ * The ordered "happy path" sequence for a route, used to render a stepper.
+ *
+ * The `Confirming` step belongs to GOLDCOIN-SOURCED routes only. A
+ * Goldcoin deposit is confirmation-tracked block by block, so there is a
+ * real ramp to show; a contract-sourced deposit (`SolToGlc`, `RhnToGlc`)
+ * folds straight to `SourceFinalized` once its obligation is observed and
+ * has no confirmation count to progress through — which is exactly why
+ * `TransferView.required_source_confirmations` is null for those.
+ *
+ * Keyed on the source chain rather than on a list of route names so a
+ * route added later gets the right shape without this function being
+ * revisited.
  */
-export function happyPathFor(direction: "GlcToSol" | "SolToGlc"): RequestState[] {
+export function happyPathFor(route: Route): RequestState[] {
+  const sourceIsGoldcoin = route === "GlcToSol" || route === "GlcToRhn";
   const base: RequestState[] = [
     "AwaitingDeposit",
     "DepositObserved",
-    ...(direction === "GlcToSol" ? (["Confirming"] as RequestState[]) : []),
+    ...(sourceIsGoldcoin ? (["Confirming"] as RequestState[]) : []),
     "SourceFinalized",
     "SettlementAuthorized",
     "DestinationSubmitted",

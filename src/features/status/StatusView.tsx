@@ -2,17 +2,27 @@
 
 import { Activity, HeartPulse } from "lucide-react";
 import { Card, ErrorState, Skeleton, StatusBadge, TokenAmount } from "@/components/ui";
-import { useBridgeStatus, useHealth, useReserve } from "@/lib/query/hooks";
+import { useBridgeStatus, useChains, useHealth, useReserve } from "@/lib/query/hooks";
 import { directionAvailabilityStatus, systemStatus } from "@/lib/status";
 import type { DirectionAvailability } from "@/lib/status";
-import { directionGateState, directions, GOLDCOIN_GLC, SOLANA_GLC } from "@/lib/bridge";
-import type { DirectionGateState } from "@/lib/bridge";
+import {
+  directionGateState,
+  directions,
+  routeAvailability,
+  routeDisplay,
+  GOLDCOIN_GLC,
+  ROUTE_PRESENTATION_ORDER,
+  SOLANA_GLC,
+} from "@/lib/bridge";
+import type { DirectionGateState, SolanaGovernedRoute } from "@/lib/bridge";
+import type { ChainsViewDto } from "@/lib/api/schemas/chains";
 import type { BridgeStatusDto } from "@/lib/api/schemas/status";
-import type { Direction } from "@/lib/api/schemas/common";
+import type { Route } from "@/lib/api/schemas/common";
 import { clampAtomicAtZero } from "@/lib/api/schemas/common";
 
 export function StatusView() {
   const status = useBridgeStatus();
+  const chains = useChains();
   const health = useHealth();
   const reserve = useReserve();
 
@@ -42,7 +52,7 @@ export function StatusView() {
     "quota-exhausted": "quota-exhausted",
     "quota-paused": "quota-paused",
   };
-  const availability = (direction: Direction) =>
+  const availability = (direction: SolanaGovernedRoute) =>
     directionAvailabilityStatus[GATE_TO_BADGE[directionGateState(data, direction)]];
 
   return (
@@ -65,6 +75,8 @@ export function StatusView() {
           direction="SolToGlc"
         />
       </div>
+
+      <RouteAvailabilityCard chains={chains.data} isPending={chains.isPending} />
 
       <Card>
         <div className="mb-3 flex items-center gap-2">
@@ -123,7 +135,7 @@ function DirectionStatusCard({
   capacityRaw: string;
   token: { decimals: number; symbol: string };
   statusData: BridgeStatusDto;
-  direction: Direction;
+  direction: SolanaGovernedRoute;
 }) {
   // Quota fields are mint-atomic (6 decimals) — see schemas/status.ts.
   const remaining =
@@ -158,6 +170,83 @@ function DirectionStatusCard({
           Remaining 24-hour capacity for this direction
         </p>
       </div>
+    </Card>
+  );
+}
+
+/**
+ * Every route the backend knows about, and whether it is open — read
+ * straight from `GET /chains`.
+ *
+ * # Why this carries no numbers
+ *
+ * The two cards above pair a direction with its destination reserve's
+ * capacity, because `GET /reserve` publishes that figure for the Goldcoin
+ * and Solana reserves. It publishes NOTHING for the Robinhood reserve: the
+ * ledger has a `RobinhoodReserve` row, but no public endpoint exposes its
+ * capacity, its pause flag, or a per-route availability boolean for
+ * either Robinhood route.
+ *
+ * So this card states availability and stops. It does not estimate a
+ * capacity, borrow the Solana figure, or render an empty placeholder that
+ * reads as "zero" — an absent number is shown as absent, and the missing
+ * backend surface is recorded rather than papered over.
+ */
+function RouteAvailabilityCard({
+  chains,
+  isPending,
+}: {
+  chains: ChainsViewDto | undefined;
+  isPending: boolean;
+}) {
+  return (
+    <Card>
+      <div className="mb-3 flex items-center gap-2">
+        <Activity aria-hidden="true" className="text-ink-500 size-4" />
+        <h2 className="text-heading-3">Routes</h2>
+      </div>
+      {isPending ? (
+        <Skeleton className="h-24 w-full" />
+      ) : (
+        <ul className="flex flex-col gap-3">
+          {ROUTE_PRESENTATION_ORDER.map((route: Route) => {
+            const display = routeDisplay(route);
+            const state = routeAvailability(chains, route);
+            return (
+              <li
+                key={route}
+                className="border-ink-100 flex flex-col gap-1 border-b pb-3 last:border-b-0 last:pb-0 sm:flex-row sm:items-start sm:justify-between sm:gap-4"
+              >
+                <div className="min-w-0">
+                  <p className="text-body-sm text-ink-900 font-medium">{display.label}</p>
+                  <p className="text-body-sm text-ink-500">
+                    {display.from.chain.name} → {display.to.chain.name}
+                  </p>
+                </div>
+                <div className="sm:max-w-[60%] sm:text-right">
+                  <StatusBadge
+                    status={
+                      state.kind === "open"
+                        ? directionAvailabilityStatus.available
+                        : directionAvailabilityStatus.paused
+                    }
+                    size="sm"
+                  />
+                  {state.kind !== "open" && (
+                    <p className="text-body-sm text-ink-500 mt-1 whitespace-pre-line">
+                      {state.kind === "unimplemented"
+                        ? "Not available on this deployment."
+                        : state.kind === "unknown"
+                          ? "Availability could not be read."
+                          : state.reason}
+                    </p>
+                  )}
+                </div>
+              </li>
+            );
+          })}
+        </ul>
+      )}
     </Card>
   );
 }

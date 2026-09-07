@@ -29,6 +29,7 @@ export type ApiErrorKind =
   | "bad-request"
   | "validation"
   | "solana-transaction"
+  | "evm-transaction"
   | "recipient-rate-limited"
   | "source-wallet-rate-limited";
 
@@ -290,6 +291,88 @@ export function solanaConfirmationError(cause: unknown, signature: string): ApiE
       next: diagnostic
         ? `If the explorer shows no successful transaction, try again. Reason: ${diagnostic}`
         : "If the explorer shows no successful transaction, try again.",
+    },
+  });
+}
+
+/**
+ * A Robinhood (EVM) deposit was refused BEFORE anything was signed —
+ * a preflight read said the route is not live, the amount is outside the
+ * contract's own limits, the configured token and contract disagree, or
+ * the balance is short.
+ *
+ * Every one of these is knowable without a signature, which is the whole
+ * point of running them: the user is told plainly that nothing has moved,
+ * because nothing was ever sent.
+ */
+export function evmPreflightError(what: string, next: string): ApiError {
+  return new ApiError({
+    kind: "evm-transaction",
+    message: "Robinhood deposit preflight refused",
+    retryable: false,
+    presentation: {
+      what,
+      funds: "No funds have left your wallet — nothing was submitted.",
+      next,
+    },
+  });
+}
+
+/**
+ * The ERC-20 approval or the deposit itself was never broadcast — the
+ * wallet rejected it, or the request failed before reaching the network.
+ * Safe to state plainly that nothing moved.
+ */
+export function evmSendError(cause: unknown, step: "approval" | "deposit"): ApiError {
+  const diagnostic = safeDiagnostic(cause);
+  const label = step === "approval" ? "token approval" : "deposit transaction";
+  return new ApiError({
+    kind: "evm-transaction",
+    message: `Robinhood ${label} could not be submitted`,
+    retryable: true,
+    cause,
+    presentation: {
+      what: `The ${label} could not be submitted.`,
+      funds: "No funds have left your wallet — the transaction was never sent.",
+      next: diagnostic
+        ? `Check your wallet and network connection, then try again. Reason: ${diagnostic}`
+        : "Check your wallet and network connection, then try again.",
+    },
+  });
+}
+
+/**
+ * The transaction WAS broadcast (there is a hash) but its receipt could
+ * not be confirmed, or it reverted.
+ *
+ * Genuinely ambiguous for a timeout, and definitively bad for a revert —
+ * neither may claim the funds are safe. Both point the user at the one
+ * artefact that can actually answer it: the transaction hash.
+ */
+export function evmConfirmationError(
+  cause: unknown,
+  hash: string,
+  outcome: "reverted" | "unconfirmed",
+): ApiError {
+  const diagnostic = safeDiagnostic(cause);
+  const reverted = outcome === "reverted";
+  return new ApiError({
+    kind: "evm-transaction",
+    message: reverted
+      ? "Robinhood deposit reverted"
+      : "Robinhood deposit confirmation failed",
+    retryable: false,
+    cause,
+    presentation: {
+      what: reverted
+        ? "The deposit transaction was mined but reverted, so no deposit was created."
+        : "The deposit transaction was submitted, but its confirmation could not be verified.",
+      funds: reverted
+        ? `Your GLC was not taken — a reverted transaction moves no tokens, though the network fee was still spent. Transaction ${hash}.`
+        : `Check transaction ${hash} on a Robinhood Network explorer before retrying — it may have already succeeded.`,
+      next: diagnostic
+        ? `If the explorer shows no successful deposit, try again. Reason: ${diagnostic}`
+        : "If the explorer shows no successful deposit, try again.",
     },
   });
 }

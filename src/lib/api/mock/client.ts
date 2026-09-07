@@ -12,6 +12,7 @@ import {
   transferLimitsSchema,
 } from "../schemas/status";
 import { bridgeStatsSchema } from "../schemas/stats";
+import { chainsViewSchema } from "../schemas/chains";
 import { explorerEventListSchema } from "../schemas/explorer";
 import { reserveHistoryListSchema } from "../schemas/reserves";
 import { quoteOutputSchema, type QuoteOutputDto } from "../schemas/quote";
@@ -26,13 +27,25 @@ import {
   type TransferViewDto,
 } from "../schemas/transfer";
 import * as fixtures from "./fixtures";
+import type { SettlementRoute } from "../schemas/common";
+import { ROBINHOOD_DECIMALS } from "@/lib/bridge/robinhood-amount";
 
 export type MockScenario =
   | "operational"
   | "paused"
   | "insufficient-liquidity"
   | "quota-exhausted"
-  | "quota-paused";
+  | "quota-paused"
+  /**
+   * Mock-only: reports both Robinhood routes as OPEN in `GET /chains`, so
+   * the `GlcToRhn`/`RhnToGlc` flows can be exercised end to end.
+   *
+   * Not a production state and not reachable from one. The real backend
+   * ships both routes disabled behind three independent gates plus the
+   * custody contract's own `routeEnabled`, and nothing in this UI can open
+   * them — this scenario only changes what the in-memory fixture answers.
+   */
+  | "robinhood-open";
 
 export interface MockClientOptions {
   readonly scenario?: MockScenario;
@@ -95,6 +108,16 @@ export class MockBridgeClient implements BridgeApiClient {
     return this.delay(bridgeStatusSchema.parse(raw));
   }
 
+  async getChains() {
+    return this.delay(
+      chainsViewSchema.parse(
+        fixtures.chainsFixture(this.now, {
+          robinhoodOpen: this.scenario === "robinhood-open",
+        }),
+      ),
+    );
+  }
+
   async getLimits() {
     return this.delay(transferLimitsSchema.parse(fixtures.limitsFixture()));
   }
@@ -115,20 +138,68 @@ export class MockBridgeClient implements BridgeApiClient {
     return this.delay(bridgeStatsSchema.parse(fixtures.statsFixture()));
   }
 
+  /**
+   * Per-route decimals and asset names, mirroring the backend's own match
+   * in `BridgeApi::quote`. Goldcoin is 8, Solana's mint is 6, and
+   * Robinhood's token is a compile-time 18 — the backend calls that last
+   * one "a compile-time constant, not a live read", because an 18-decimal
+   * token is what makes a separate Robinhood unit necessary at all.
+   */
+  private quoteUnits(route: SettlementRoute): {
+    source: number;
+    destination: number;
+    sourceAsset: string;
+    destinationAsset: string;
+  } {
+    switch (route) {
+      case "GlcToSol":
+        return {
+          source: GOLDCOIN_DECIMALS,
+          destination: SOLANA_DECIMALS,
+          sourceAsset: "GLC (Goldcoin)",
+          destinationAsset: "GLC (Solana)",
+        };
+      case "SolToGlc":
+        return {
+          source: SOLANA_DECIMALS,
+          destination: GOLDCOIN_DECIMALS,
+          sourceAsset: "GLC (Solana)",
+          destinationAsset: "GLC (Goldcoin)",
+        };
+      case "GlcToRhn":
+        return {
+          source: GOLDCOIN_DECIMALS,
+          destination: ROBINHOOD_DECIMALS,
+          sourceAsset: "GLC (Goldcoin)",
+          destinationAsset: "GLC (Robinhood)",
+        };
+      case "RhnToGlc":
+        return {
+          source: ROBINHOOD_DECIMALS,
+          destination: GOLDCOIN_DECIMALS,
+          sourceAsset: "GLC (Robinhood)",
+          destinationAsset: "GLC (Goldcoin)",
+        };
+    }
+  }
+
   async getQuote(request: {
-    direction: "GlcToSol" | "SolToGlc";
+    direction: SettlementRoute;
     gross_amount: string;
   }): Promise<QuoteOutputDto> {
     const gross = BigInt(request.gross_amount);
     if (gross <= 0n) throw badRequestError("gross_amount must be greater than zero");
 
+    // A quote for a route the gate refuses is refused too, exactly as the
+    // real backend does — it parses `direction` as a `Route` and returns
+    // the same cause-agnostic 409 a create would, so "not open" is
+    // distinguishable from "you sent nonsense".
+    if (!this.routeOpen(request.direction)) throw directionUnavailableError();
+
     const feeBps = fixtures.BRIDGE_FEE_BPS;
     const fee = (gross * BigInt(feeBps)) / 10_000n;
     const net = gross - fee;
-    const sourceDecimals =
-      request.direction === "GlcToSol" ? GOLDCOIN_DECIMALS : SOLANA_DECIMALS;
-    const destDecimals =
-      request.direction === "GlcToSol" ? SOLANA_DECIMALS : GOLDCOIN_DECIMALS;
+    const units = this.quoteUnits(request.direction);
 
     const output = {
       direction: request.direction,
@@ -139,13 +210,20 @@ export class MockBridgeClient implements BridgeApiClient {
       fee_display_amount: formatDisplay(fee, GOLDCOIN_DECIMALS),
       net_amount: net.toString(),
       net_display_amount: formatDisplay(net, GOLDCOIN_DECIMALS),
-      source_decimals: sourceDecimals,
-      destination_decimals: destDecimals,
-      source_asset: request.direction === "GlcToSol" ? "GLC (Goldcoin)" : "GLC (Solana)",
-      destination_asset:
-        request.direction === "GlcToSol" ? "GLC (Solana)" : "GLC (Goldcoin)",
+      source_decimals: units.source,
+      destination_decimals: units.destination,
+      source_asset: units.sourceAsset,
+      destination_asset: units.destinationAsset,
     };
     return this.delay(quoteOutputSchema.parse(output));
+  }
+
+  /** The fixture's own route gate — the single place mock availability is decided. */
+  private routeOpen(route: SettlementRoute): boolean {
+    const chains = fixtures.chainsFixture(this.now, {
+      robinhoodOpen: this.scenario === "robinhood-open",
+    });
+    return chains.routes.find((entry) => entry.id === route)?.enabled ?? false;
   }
 
   async getSolToGlcRecipientEligibility(address: string, wallet: string | null) {
@@ -178,10 +256,25 @@ export class MockBridgeClient implements BridgeApiClient {
 
   async createTransfer(request: CreateTransferRequest): Promise<CreateTransferOutputDto> {
     const validated = createTransferRequestSchema.parse(request);
+    // An absent `route` means `GlcToSol`, exactly as the backend defaults
+    // it — the default applies only to an ABSENT field, never as a
+    // fallback for a route that was named and refused.
+    const route = validated.route ?? "GlcToSol";
+
+    // A route this fixture reports as closed is refused before anything is
+    // created, leaving no request behind — the backend gates the route
+    // ahead of every fee computation, capacity reservation and ledger
+    // write for the same reason.
+    if (!this.routeOpen(route)) throw directionUnavailableError();
+    if (route !== "GlcToSol" && route !== "GlcToRhn") {
+      throw badRequestError(`route ${route} is not created through this endpoint`);
+    }
 
     // Every unavailable cause returns the backend's single cause-agnostic
     // 409, exactly like the real service (DIRECTION_UNAVAILABLE_MESSAGE).
-    if (this.scenario !== "operational") throw directionUnavailableError();
+    if (this.scenario !== "operational" && this.scenario !== "robinhood-open") {
+      throw directionUnavailableError();
+    }
 
     const id = this.nextId++;
     const feeBps = fixtures.BRIDGE_FEE_BPS;
@@ -190,7 +283,7 @@ export class MockBridgeClient implements BridgeApiClient {
 
     this.created.set(id, {
       id,
-      direction: "GlcToSol",
+      direction: route,
       state: "AwaitingDeposit",
       gross_amount_atomic: gross.toString(),
       fee_bps: feeBps,

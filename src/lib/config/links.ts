@@ -1,4 +1,5 @@
 import { env } from "./env";
+import type { Chain } from "@/lib/api/schemas/common";
 
 /**
  * Every outbound URL the UI can render, derived from configuration.
@@ -27,6 +28,36 @@ export function solanaTxUrl(signature: string): string | null {
 
 export function solanaAddressUrl(address: string): string | null {
   return build(env.solanaExplorerAddressUrl, address);
+}
+
+export function robinhoodTxUrl(hash: string): string | null {
+  return build(env.robinhoodExplorerTxUrl, hash);
+}
+
+export function robinhoodAddressUrl(address: string): string | null {
+  return build(env.robinhoodExplorerAddressUrl, address);
+}
+
+/**
+ * The transaction-explorer link for a transaction that happened ON a
+ * particular chain.
+ *
+ * Resolving by chain rather than by "is this GlcToSol" is what keeps a
+ * four-route world correct: a `GlcToRhn` source transaction is a Goldcoin
+ * txid and its destination transaction is an EVM hash, and a binary
+ * direction check would have silently linked one of them to the wrong
+ * explorer. Returns `null` when no template is configured for that chain,
+ * which is the existing "render the id as plain text" path.
+ */
+export function chainTxUrl(chain: Chain, id: string): string | null {
+  switch (chain) {
+    case "goldcoin":
+      return goldcoinTxUrl(id);
+    case "solana":
+      return solanaTxUrl(id);
+    case "robinhood":
+      return robinhoodTxUrl(id);
+  }
 }
 
 /** The host this deployment is served from, for the anti-phishing notice. */

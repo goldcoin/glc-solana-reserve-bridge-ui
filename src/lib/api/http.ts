@@ -23,6 +23,7 @@ import {
   transferLimitsSchema,
 } from "./schemas/status";
 import { bridgeStatsSchema } from "./schemas/stats";
+import { chainsViewSchema } from "./schemas/chains";
 import { explorerEventListSchema } from "./schemas/explorer";
 import { reserveHistoryListSchema } from "./schemas/reserves";
 import { quoteOutputSchema } from "./schemas/quote";
@@ -66,6 +67,10 @@ export class HttpBridgeClient implements BridgeApiClient {
 
   getStatus(signal?: AbortSignal) {
     return this.request("/status", bridgeStatusSchema, {}, signal);
+  }
+
+  getChains(signal?: AbortSignal) {
+    return this.request("/chains", chainsViewSchema, {}, signal);
   }
 
   getLimits(signal?: AbortSignal) {

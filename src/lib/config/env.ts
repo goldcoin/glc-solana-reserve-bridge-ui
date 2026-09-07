@@ -20,6 +20,36 @@ import { z } from "zod";
 
 const urlSchema = z.url({ error: "must be an absolute URL including scheme" });
 
+/**
+ * A decimal EIP-155 chain id.
+ *
+ * Decimal ONLY, never hex. `4663` and `0x4663` are different chain ids
+ * (4663 and 18019), so a parser that guessed by the presence of a prefix
+ * would be one missing `0x` away from signing for the wrong network — the
+ * same reasoning the backend's `EvmChainId` documents for keeping its
+ * decimal and hex entry points separate.
+ */
+const chainIdSchema = z
+  .string()
+  .regex(/^[1-9]\d*$/, {
+    error: "must be a positive decimal EIP-155 chain id (decimal, not hex)",
+  })
+  .transform((value) => Number(value))
+  .pipe(z.number().int().positive().max(Number.MAX_SAFE_INTEGER));
+
+/**
+ * A 20-byte EVM address in `0x`-prefixed hex.
+ *
+ * Deliberately shape-only and case-insensitive here: EIP-55 checksum
+ * verification belongs at the point a user TYPES an address (see
+ * `@/lib/evm/address`), where a checksum failure is actionable feedback.
+ * A configured deployment address that merely differs in case is a
+ * working address, and failing startup over it would be a false alarm.
+ */
+const evmAddressSchema = z
+  .string()
+  .regex(/^0x[0-9a-fA-F]{40}$/, { error: "must be a 0x-prefixed 20-byte EVM address" });
+
 /** An explorer link template containing the {value} placeholder. */
 const templateSchema = z.string().refine((value) => value.includes("{value}"), {
   error: "must contain the {value} placeholder",
@@ -158,6 +188,39 @@ const envSchema = z
     goldcoinRpcUrl: urlSchema.optional(),
 
     /**
+     * Robinhood Network (EVM) deployment parameters.
+     *
+     * ALL of these are optional and ALL of them are absent today: the
+     * `GlcRobinhoodBridge` custody contract is not deployed, and its
+     * address, EIP-155 chain id and start block are recorded as unknown
+     * in the backend's own docs/32-robinhood-settlement-phase-f.md. The
+     * UI therefore ships knowing how to build the Robinhood deposit and
+     * knowing it cannot: `robinhoodDepositCapability()` refuses with a
+     * stated reason whenever any of them is missing, exactly as
+     * `reserveProgramId` already gates the Solana deposit.
+     *
+     * Nothing here is a fallback or a default. There is deliberately no
+     * "well-known" Robinhood chain id or contract address in this
+     * codebase — guessing either would build a transaction against the
+     * wrong chain or the wrong contract, and both cost the user their
+     * funds. Absent means disabled, never assumed.
+     *
+     * These are also NOT an availability signal. A fully configured
+     * deployment still shows the route as closed until `GET /chains`
+     * says otherwise — the backend's RouteGate and the contract's own
+     * `routeEnabled` are the gates, not this config.
+     */
+    robinhoodChainId: chainIdSchema.optional(),
+    robinhoodChainName: z.string().min(1).optional(),
+    robinhoodRpcUrl: urlSchema.optional(),
+    /** `GlcRobinhoodBridge` — the custody contract `deposit()` is called on. */
+    robinhoodBridgeAddress: evmAddressSchema.optional(),
+    /** The ERC-20 GLC token the custody contract holds. 18 decimals, asserted backend-side. */
+    robinhoodTokenAddress: evmAddressSchema.optional(),
+    robinhoodExplorerTxUrl: templateSchema.optional(),
+    robinhoodExplorerAddressUrl: templateSchema.optional(),
+
+    /**
      * Goldcoin base58check address version bytes, as decimals.
      *
      * Deliberately configuration rather than a constant. Guessing a version
@@ -250,6 +313,16 @@ function readEnv(): PublicEnv {
     reserveProgramId: present(process.env.NEXT_PUBLIC_RESERVE_PROGRAM_ID),
 
     goldcoinRpcUrl: present(process.env.NEXT_PUBLIC_GOLDCOIN_RPC_URL),
+
+    robinhoodChainId: present(process.env.NEXT_PUBLIC_ROBINHOOD_CHAIN_ID),
+    robinhoodChainName: present(process.env.NEXT_PUBLIC_ROBINHOOD_CHAIN_NAME),
+    robinhoodRpcUrl: present(process.env.NEXT_PUBLIC_ROBINHOOD_RPC_URL),
+    robinhoodBridgeAddress: present(process.env.NEXT_PUBLIC_ROBINHOOD_BRIDGE_ADDRESS),
+    robinhoodTokenAddress: present(process.env.NEXT_PUBLIC_ROBINHOOD_TOKEN_ADDRESS),
+    robinhoodExplorerTxUrl: present(process.env.NEXT_PUBLIC_ROBINHOOD_EXPLORER_TX_URL),
+    robinhoodExplorerAddressUrl: present(
+      process.env.NEXT_PUBLIC_ROBINHOOD_EXPLORER_ADDRESS_URL,
+    ),
 
     glcAddressVersions: present(process.env.NEXT_PUBLIC_GLC_ADDRESS_VERSIONS),
     glcBech32Hrp: present(process.env.NEXT_PUBLIC_GLC_BECH32_HRP),

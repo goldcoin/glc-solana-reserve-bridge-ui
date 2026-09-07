@@ -172,8 +172,19 @@ describe("explorer events tolerate a future state without weakening validation",
   });
 
   it("still rejects a malformed event wholesale — a bad direction is not a future state", () => {
+    // `GlcToRhn` used to be the example of an unacceptable direction here.
+    // It is now a real backend route and MUST parse: the direction
+    // vocabulary is the backend's whole `Route` enum, so a Robinhood row
+    // appearing in the feed renders instead of failing the entire page.
+    // Parsing it still says nothing about whether the route is usable —
+    // that answer comes only from `GET /chains`.
     expect(
       explorerEventSchema.safeParse({ ...event(), direction: "GlcToRhn" }).success,
+    ).toBe(true);
+    // A direction outside that enum is still a contract break, not a
+    // future state to tolerate.
+    expect(
+      explorerEventSchema.safeParse({ ...event(), direction: "GlcToXyz" }).success,
     ).toBe(false);
     expect(explorerEventSchema.safeParse({ ...event(), id: "1" }).success).toBe(false);
     const { at: _at, ...missingTimestamp } = event();

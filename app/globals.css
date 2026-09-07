@@ -60,6 +60,12 @@
   /* --- Chain identity (E2) — identity only, never status ------------------ */
   --color-chain-goldcoin: #c89211;
   --color-chain-solana: #6b54d3;
+  /* Magenta, deliberately NOT the green of Robinhood's own brand: green is
+     this system's success tone, and a chain mark that reads as "healthy"
+     is exactly the identity/status collision the semantic tokens above are
+     separated to prevent. Distinct in hue from gold, violet, and all four
+     status tones. */
+  --color-chain-robinhood: #a8237a;
 
   /* --- Surfaces (E2) ------------------------------------------------------
      The page plane and the raised planes that sit on it. Named rather than
@@ -359,6 +365,7 @@
   /* --- Chain identity — identity only, never status ---------------------- */
   --color-chain-goldcoin: #e0a82a;
   --color-chain-solana: #a996f0;
+  --color-chain-robinhood: #e78dc4;
 
   /* --- Elevation ---------------------------------------------------------
      A shadow tuned for white is invisible on near-black. Dark elevation is

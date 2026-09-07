@@ -5,6 +5,7 @@ import type {
   TransferLimitsDto,
 } from "./schemas/status";
 import type { BridgeStatsDto } from "./schemas/stats";
+import type { ChainsViewDto } from "./schemas/chains";
 import type { ExplorerEventListDto } from "./schemas/explorer";
 import type { ReserveHistoryListDto, ReserveDirectionParam } from "./schemas/reserves";
 import type { QuoteOutputDto } from "./schemas/quote";
@@ -29,10 +30,22 @@ import type { Direction } from "./schemas/common";
  * This mirrors the real, ground-truth surface of
  * `service/src/api.rs` in glc-solana-reserve-bridge — there is no more and
  * no less here than the backend actually implements. In particular there is
- * deliberately no "create SolToGlc transfer" method: that direction has no
- * backend endpoint, the client submits the `deposit_to_reserve` instruction
- * directly (see `src/lib/solana/deposit.ts`), then discovers the resulting
- * transfer via `listTransfers({ address })`.
+ * deliberately no "create SolToGlc transfer" method and no "create
+ * RhnToGlc transfer" method: neither contract-sourced route has a backend
+ * endpoint. The client submits the chain transaction itself (see
+ * `src/lib/solana/deposit.ts` and `src/lib/evm/deposit.ts`), then discovers
+ * the resulting transfer via `listTransfers({ address })`.
+ *
+ * # A known gap, recorded rather than papered over
+ *
+ * `listTransfers({ address })` accepts a base58 Solana pubkey ONLY. The
+ * backend parses `?address=` as a `Pubkey` and its underlying query
+ * matches just `GlcToSol.recipient` / `SolToGlc.requester`
+ * (`Ledger::transfers_page`), so a 20-byte EVM address returns 400 and
+ * Robinhood rows are never returned even if the bytes were accepted.
+ * Wallet-scoped activity for Robinhood therefore does not exist yet, on
+ * either side. This UI does not fake it: the backend must add EVM address
+ * support to `GET /transfers` before that view can work.
  */
 
 export interface ListReserveHistoryParams {
@@ -57,6 +70,16 @@ export interface ListTransfersParams {
 
 export interface BridgeApiClient {
   getStatus(signal?: AbortSignal): Promise<BridgeStatusDto>;
+  /**
+   * The chain/route registry — the ONLY authoritative answer to "can a
+   * user start a transfer this way right now" (`GET /chains`).
+   *
+   * Every route-availability decision in this app reads from here. It is
+   * never re-derived from public config, from which chains this build
+   * knows about, or from whether a contract address happens to be set:
+   * that is what makes opening a route a backend-only change.
+   */
+  getChains(signal?: AbortSignal): Promise<ChainsViewDto>;
   getLimits(signal?: AbortSignal): Promise<TransferLimitsDto>;
   getReserve(signal?: AbortSignal): Promise<ReserveAvailabilityDto>;
   getHealth(signal?: AbortSignal): Promise<PublicHealthDto>;
@@ -87,7 +110,13 @@ export interface BridgeApiClient {
   ): Promise<RecipientEligibilityDto>;
 
   getTransfer(id: number, signal?: AbortSignal): Promise<TransferViewDto>;
-  /** GlcToSol only — the backend has no create endpoint for SolToGlc. */
+  /**
+   * Goldcoin-SOURCED routes only (`GlcToSol`, `GlcToRhn`). The backend has
+   * no create endpoint for the contract-sourced routes: `SolToGlc` submits
+   * `deposit_to_reserve` itself (`src/lib/solana/deposit.ts`) and
+   * `RhnToGlc` calls the custody contract's `deposit` (`src/lib/evm`),
+   * then both discover the resulting transfer through the activity list.
+   */
   createTransfer(
     request: CreateTransferRequest,
     signal?: AbortSignal,

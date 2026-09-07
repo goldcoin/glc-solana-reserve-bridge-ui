@@ -3,6 +3,7 @@ import {
   directionSchema,
   nonNegativeAtomicAmountSchema,
   paginatedSchema,
+  settlementRouteSchema,
   unixSecondsSchema,
 } from "./common";
 
@@ -143,7 +144,14 @@ export type TransferViewDto = z.infer<typeof transferViewSchema>;
 export const transferListSchema = paginatedSchema(transferViewSchema);
 export type TransferListDto = z.infer<typeof transferListSchema>;
 
-/** Request body for `POST /transfers` — `CreateTransferInput`. GlcToSol only. */
+/**
+ * Request body for `POST /transfers` — `CreateTransferInput`.
+ *
+ * Goldcoin-SOURCED routes only (`GlcToSol`, `GlcToRhn`). The two
+ * contract-sourced routes have no create endpoint by design: the
+ * depositor calls the chain directly and the backend's indexer folds the
+ * resulting obligation.
+ */
 export const createTransferRequestSchema = z.object({
   /**
    * Sent as an exact decimal string. The backend accepts a string or a
@@ -151,7 +159,29 @@ export const createTransferRequestSchema = z.object({
    * `Number.MAX_SAFE_INTEGER` without corrupting it.
    */
   amount_atomic: z.string().regex(/^\d+$/, "must be a decimal integer string"),
+  /**
+   * Spelled in the DESTINATION chain's own notation and parsed as that
+   * chain's address type: a base58 Solana pubkey for `GlcToSol`, a
+   * `0x`-prefixed 20-byte EVM address for `GlcToRhn`. Which one is
+   * expected follows from `route`, so the two are never interchangeable
+   * and a mismatch is a parse failure backend-side, not a silently stored
+   * blob.
+   */
   recipient: z.string().min(1),
+  /**
+   * The route to create. OPTIONAL on the wire: an absent field means
+   * `GlcToSol`, which is what this endpoint has always created.
+   *
+   * A route that is PRESENT and refused is an error, never a fallback —
+   * the backend has no input naming `GlcToRhn` that produces a `GlcToSol`
+   * request. It is gated before any fee computation, chain read, capacity
+   * reservation, ledger write or deposit-address derivation, so a refused
+   * route leaves no trace: no row, no reserved liquidity, no address.
+   *
+   * Sent explicitly by this UI even for `GlcToSol`, so what a request
+   * creates is stated rather than inherited from a default.
+   */
+  route: settlementRouteSchema.optional(),
 });
 
 export type CreateTransferRequest = z.infer<typeof createTransferRequestSchema>;

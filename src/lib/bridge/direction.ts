@@ -1,4 +1,6 @@
-import type { Chain, Direction } from "@/lib/api/schemas/common";
+import type { Chain, Route, SettlementRoute } from "@/lib/api/schemas/common";
+import { isSettlementRoute } from "@/lib/api/schemas/common";
+import { ROBINHOOD_DECIMALS } from "./robinhood-amount";
 
 /**
  * The direction model.
@@ -34,16 +36,28 @@ export interface DirectionSide {
 }
 
 export interface DirectionDescriptor {
-  readonly id: Direction;
+  readonly id: SettlementRoute;
   readonly from: DirectionSide;
   readonly to: DirectionSide;
   readonly label: string;
   /** The reserve this direction draws its payout from (`Direction::destination_reserve()`). */
-  readonly destinationReserve: "goldcoin" | "solana";
+  readonly destinationReserve: "goldcoin" | "solana" | "robinhood";
+  /**
+   * How the SOURCE side of this route is funded by the user.
+   *
+   * - `goldcoin-deposit-address` — the backend creates the request and
+   *   returns a per-request Goldcoin address to send to (`POST /transfers`).
+   * - `solana-program` / `robinhood-contract` — there is no backend create
+   *   endpoint; the user's own wallet calls the chain directly and the
+   *   backend's indexer folds the resulting on-chain obligation. This is a
+   *   deliberate backend design, not a gap (`service/src/api.rs`).
+   */
+  readonly funding: "goldcoin-deposit-address" | "solana-program" | "robinhood-contract";
 }
 
 const GOLDCOIN: ChainDescriptor = { id: "goldcoin", name: "Goldcoin" };
 const SOLANA: ChainDescriptor = { id: "solana", name: "Solana" };
+const ROBINHOOD: ChainDescriptor = { id: "robinhood", name: "Robinhood Network" };
 
 /**
  * Token display names, used everywhere a direction is described to a user.
@@ -61,6 +75,17 @@ export const SOLANA_GLC: TokenDescriptor = {
   name: "GLC on Solana",
   decimals: 6,
 };
+/**
+ * The same GLC again, on Robinhood Network, at that token's own
+ * 18 decimals. The precision is a protocol constant asserted against the
+ * deployed token at backend preflight, not a live read — see
+ * `./robinhood-amount`.
+ */
+export const ROBINHOOD_GLC: TokenDescriptor = {
+  symbol: "GLC",
+  name: "GLC on Robinhood",
+  decimals: ROBINHOOD_DECIMALS,
+};
 
 // The minimum GROSS amount a user may enter/bridge, in either direction,
 // is no longer a fixed constant here — a hardcoded "100 GLC" quietly went
@@ -73,13 +98,25 @@ export const SOLANA_GLC: TokenDescriptor = {
 // its call site in `BridgeCard.tsx` — so it can never drift out of sync
 // with either value again.
 
-export const directions: Record<Direction, DirectionDescriptor> = {
+/**
+ * Descriptors for the four routes that HAVE backend settlement machinery.
+ *
+ * Being in this table says the UI knows how to render and (for an open
+ * route) drive the flow — it says nothing about availability. Both
+ * Robinhood routes ship disabled backend-side and stay that way until
+ * `GET /chains` reports otherwise; `./route-availability` is the only
+ * thing that answers "can this be used". `SolToRhn`/`RhnToSol` are absent
+ * by design: they have no settlement machinery on either side, so there
+ * is no flow to describe.
+ */
+export const directions: Record<SettlementRoute, DirectionDescriptor> = {
   GlcToSol: {
     id: "GlcToSol",
     from: { chain: GOLDCOIN, token: GOLDCOIN_GLC },
     to: { chain: SOLANA, token: SOLANA_GLC },
     label: `${GOLDCOIN_GLC.name} → ${SOLANA_GLC.name}`,
     destinationReserve: "solana",
+    funding: "goldcoin-deposit-address",
   },
   SolToGlc: {
     id: "SolToGlc",
@@ -87,9 +124,74 @@ export const directions: Record<Direction, DirectionDescriptor> = {
     to: { chain: GOLDCOIN, token: GOLDCOIN_GLC },
     label: `${SOLANA_GLC.name} → ${GOLDCOIN_GLC.name}`,
     destinationReserve: "goldcoin",
+    funding: "solana-program",
+  },
+  GlcToRhn: {
+    id: "GlcToRhn",
+    from: { chain: GOLDCOIN, token: GOLDCOIN_GLC },
+    to: { chain: ROBINHOOD, token: ROBINHOOD_GLC },
+    label: `${GOLDCOIN_GLC.name} → ${ROBINHOOD_GLC.name}`,
+    destinationReserve: "robinhood",
+    funding: "goldcoin-deposit-address",
+  },
+  RhnToGlc: {
+    id: "RhnToGlc",
+    from: { chain: ROBINHOOD, token: ROBINHOOD_GLC },
+    to: { chain: GOLDCOIN, token: GOLDCOIN_GLC },
+    label: `${ROBINHOOD_GLC.name} → ${GOLDCOIN_GLC.name}`,
+    destinationReserve: "goldcoin",
+    funding: "robinhood-contract",
   },
 };
 
-export function oppositeDirection(direction: Direction): Direction {
-  return direction === "GlcToSol" ? "SolToGlc" : "GlcToSol";
+const OPPOSITES: Record<SettlementRoute, SettlementRoute> = {
+  GlcToSol: "SolToGlc",
+  SolToGlc: "GlcToSol",
+  GlcToRhn: "RhnToGlc",
+  RhnToGlc: "GlcToRhn",
+};
+
+/** The reverse route. Being the reverse of an open route implies nothing about availability. */
+export function oppositeDirection(direction: SettlementRoute): SettlementRoute {
+  return OPPOSITES[direction];
+}
+
+/**
+ * Presentation for EVERY route the backend can name, including the two
+ * with no settlement machinery.
+ *
+ * `directions` above covers only routes the UI can drive. This covers the
+ * whole wire vocabulary, because a route with no flow still has to be
+ * NAMEABLE: `GET /chains` lists all six so a disabled `SolToRhn` can
+ * render as visibly unavailable rather than silently missing, and a
+ * response could in principle carry any of them.
+ *
+ * Having a label here is not an implication that a route works. It is the
+ * opposite — it is what lets the UI say clearly that one does not.
+ */
+export interface RouteDisplay {
+  readonly from: DirectionSide;
+  readonly to: DirectionSide;
+  readonly label: string;
+}
+
+const NON_SETTLEMENT_DISPLAY: Record<Exclude<Route, SettlementRoute>, RouteDisplay> = {
+  SolToRhn: {
+    from: { chain: SOLANA, token: SOLANA_GLC },
+    to: { chain: ROBINHOOD, token: ROBINHOOD_GLC },
+    label: `${SOLANA_GLC.name} → ${ROBINHOOD_GLC.name}`,
+  },
+  RhnToSol: {
+    from: { chain: ROBINHOOD, token: ROBINHOOD_GLC },
+    to: { chain: SOLANA, token: SOLANA_GLC },
+    label: `${ROBINHOOD_GLC.name} → ${SOLANA_GLC.name}`,
+  },
+};
+
+export function routeDisplay(route: Route): RouteDisplay {
+  if (isSettlementRoute(route)) {
+    const descriptor = directions[route];
+    return { from: descriptor.from, to: descriptor.to, label: descriptor.label };
+  }
+  return NON_SETTLEMENT_DISPLAY[route];
 }

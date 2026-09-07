@@ -25,6 +25,7 @@ import type * as EnvModule from "@/lib/config/env";
  */
 
 const getStatus = vi.fn();
+const getChains = vi.fn();
 const getLimits = vi.fn();
 const getReserve = vi.fn();
 const getQuote = vi.fn();
@@ -35,6 +36,7 @@ const getSolToGlcRecipientEligibility = vi.fn();
 vi.mock("@/lib/api", async () => ({
   bridgeApi: {
     getStatus: (...args: unknown[]) => getStatus(...args),
+    getChains: (...args: unknown[]) => getChains(...args),
     getLimits: (...args: unknown[]) => getLimits(...args),
     getReserve: (...args: unknown[]) => getReserve(...args),
     getQuote: (...args: unknown[]) => getQuote(...args),
@@ -130,7 +132,11 @@ async function fillSolToGlcForm(
   user: ReturnType<typeof userEvent.setup>,
   address: string,
 ) {
-  await user.click(screen.getByRole("radio", { name: /GLC on Solana.*GLC L1/i }));
+  // A route is unselectable until `GET /chains` has answered — availability
+  // is never assumed, so the control is genuinely disabled until then.
+  const solToGlc = screen.getByRole("radio", { name: /GLC on Solana.*GLC L1/i });
+  await waitFor(() => expect(solToGlc).toBeEnabled());
+  await user.click(solToGlc);
   await waitFor(() => expect(getLimits).toHaveBeenCalled());
   await user.type(screen.getByLabelText(/Amount in GLC/i), "500");
   await user.type(screen.getByLabelText("Goldcoin destination address"), address);
@@ -149,6 +155,10 @@ beforeEach(() => {
   walletConnection.address = WALLET_ADDRESS;
   walletConnection.canSign = true;
   getStatus.mockResolvedValue(fixtures.statusFixture(() => new Date()));
+  // The route registry every gate now consults. The default fixture is
+  // the real shipping state: both legacy routes open, both Robinhood
+  // routes implemented-but-disabled, the Solana<->Robinhood pair inert.
+  getChains.mockResolvedValue(fixtures.chainsFixture(() => new Date()));
   getLimits.mockResolvedValue(fixtures.limitsFixture());
   getReserve.mockResolvedValue(fixtures.reserveFixture());
   getQuote.mockResolvedValue(quote());

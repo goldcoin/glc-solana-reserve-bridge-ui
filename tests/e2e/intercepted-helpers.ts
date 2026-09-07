@@ -45,6 +45,16 @@ export async function mockHappyBackend(page: Page): Promise<void> {
       fixtures.statusFixture(() => new Date()),
     ),
   );
+  // The route registry. Every availability decision in the app reads from
+  // here, so an intercepted backend that omitted it would leave every
+  // route unselectable — correctly, since unknown availability fails
+  // closed, but for a reason unrelated to what these specs are testing.
+  await page.route(`${INTERCEPTED_API_ORIGIN}/chains`, (route) =>
+    json(
+      route,
+      fixtures.chainsFixture(() => new Date()),
+    ),
+  );
   await page.route(`${INTERCEPTED_API_ORIGIN}/limits`, (route) =>
     json(route, fixtures.limitsFixture()),
   );

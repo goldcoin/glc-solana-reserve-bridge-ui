@@ -5,6 +5,7 @@ import type {
   TransferLimitsDto,
 } from "../schemas/status";
 import type { BridgeStatsDto } from "../schemas/stats";
+import type { ChainsViewDto } from "../schemas/chains";
 import type { ExplorerEventDto } from "../schemas/explorer";
 import type { ReserveHistoryEntryDto } from "../schemas/reserves";
 import type { TransferViewDto, RefundViewDto, RequestState } from "../schemas/transfer";
@@ -104,6 +105,92 @@ export function quotaPausedStatusFixture(): BridgeStatusDto {
     sol_to_glc_quota_exhausted: false,
     glc_to_sol_rolling_volume_remaining: "0",
     sol_to_glc_rolling_volume_remaining: "100000000000",
+  };
+}
+
+/**
+ * `GET /chains`, in the state a real deployment actually serves today.
+ *
+ * Mirrors the backend's own resolved defaults exactly
+ * (`Route::default_enabled` + the Robinhood adapter's capability):
+ *
+ * - `GlcToSol`/`SolToGlc` — enabled. They predate the route registry and
+ *   resolve to enabled against an unmodified config and an unmigrated
+ *   ledger, which is why existing behaviour is unchanged.
+ * - `GlcToRhn`/`RhnToGlc` — implemented, DISABLED. The settlement
+ *   machinery exists (Phase F); the routes ship closed and opening one
+ *   needs every gate, this service's and the contract's.
+ * - `SolToRhn`/`RhnToSol` — `implemented: false`. Structurally
+ *   non-executable: no `Direction` value exists for either, so no
+ *   settlement function can be called with them at all.
+ *
+ * The disabled copy is the backend's `RouteGateError::UNAVAILABLE_MESSAGE`
+ * verbatim, so what mock mode renders is what production renders.
+ */
+export const ROUTE_UNAVAILABLE_MESSAGE =
+  "This route is not available yet.\nRobinhood Network support is in development and " +
+  "cannot be used for transfers.";
+
+export function chainsFixture(
+  now: () => Date,
+  options: { readonly robinhoodOpen?: boolean } = {},
+): ChainsViewDto {
+  // Mock-only. Never a claim that these routes are open in production —
+  // it exists so the Robinhood flows can be exercised end to end against
+  // a route the real backend keeps closed.
+  const robinhoodOpen = options.robinhoodOpen ?? false;
+  const robinhood = (id: "GlcToRhn" | "RhnToGlc"): ChainsViewDto["routes"][number] => ({
+    id,
+    source_chain: id === "GlcToRhn" ? "goldcoin" : "robinhood",
+    destination_chain: id === "GlcToRhn" ? "robinhood" : "goldcoin",
+    enabled: robinhoodOpen,
+    disabled_reason: robinhoodOpen ? null : ROUTE_UNAVAILABLE_MESSAGE,
+    implemented: true,
+  });
+
+  return {
+    chains: [
+      { id: "goldcoin", display_name: "Goldcoin L1" },
+      { id: "solana", display_name: "Solana" },
+      { id: "robinhood", display_name: "Robinhood Network" },
+    ],
+    routes: [
+      {
+        id: "GlcToSol",
+        source_chain: "goldcoin",
+        destination_chain: "solana",
+        enabled: true,
+        disabled_reason: null,
+        implemented: true,
+      },
+      {
+        id: "SolToGlc",
+        source_chain: "solana",
+        destination_chain: "goldcoin",
+        enabled: true,
+        disabled_reason: null,
+        implemented: true,
+      },
+      robinhood("GlcToRhn"),
+      robinhood("RhnToGlc"),
+      {
+        id: "SolToRhn",
+        source_chain: "solana",
+        destination_chain: "robinhood",
+        enabled: false,
+        disabled_reason: ROUTE_UNAVAILABLE_MESSAGE,
+        implemented: false,
+      },
+      {
+        id: "RhnToSol",
+        source_chain: "robinhood",
+        destination_chain: "solana",
+        enabled: false,
+        disabled_reason: ROUTE_UNAVAILABLE_MESSAGE,
+        implemented: false,
+      },
+    ],
+    as_of: Math.floor(now().getTime() / 1000),
   };
 }
 

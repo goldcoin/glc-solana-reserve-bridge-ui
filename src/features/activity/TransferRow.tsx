@@ -2,12 +2,12 @@ import Link from "next/link";
 import { ArrowRight } from "lucide-react";
 import { StatusBadge, TokenAmount } from "@/components/ui";
 import { requestStateStatus } from "@/lib/status";
-import { directions } from "@/lib/bridge";
+import { routeDisplay } from "@/lib/bridge";
 import { GOLDCOIN_DECIMALS } from "@/lib/config/env";
 import type { TransferViewDto } from "@/lib/api/schemas/transfer";
 
 export function TransferRow({ transfer }: { transfer: TransferViewDto }) {
-  const descriptor = directions[transfer.direction];
+  const descriptor = routeDisplay(transfer.direction);
   const created = new Date(transfer.created_at * 1000);
 
   return (

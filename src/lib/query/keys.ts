@@ -8,6 +8,7 @@ import type {
 
 export const queryKeys = {
   status: () => ["bridge", "status"] as const,
+  chains: () => ["bridge", "chains"] as const,
   limits: () => ["bridge", "limits"] as const,
   reserve: () => ["bridge", "reserve"] as const,
   health: () => ["bridge", "health"] as const,
@@ -36,6 +37,13 @@ export const queryKeys = {
 export const pollIntervals = {
   /** The global trust strip. Wrong status here is worse than stale status. */
   status: 30_000,
+  /**
+   * The route registry. Polled on the same cadence as status rather than
+   * the slow `limits` cadence: this is what decides whether a route can
+   * be used at all, and a route closing (or opening) mid-session must not
+   * sit stale behind a five-minute window while the form still offers it.
+   */
+  chains: 30_000,
   /** Fee schedule and caps change rarely. */
   limits: 300_000,
   /** Reserve capacity. Polled on every page — the pause/liquidity banner is site-wide. */

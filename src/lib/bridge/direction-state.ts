@@ -1,5 +1,22 @@
 import type { BridgeStatusDto } from "@/lib/api/schemas/status";
-import type { Direction } from "@/lib/api/schemas/common";
+/**
+ * The two routes `GET /status`'s availability fields actually describe.
+ *
+ * Every field this module reads is named for one of them
+ * (`glc_to_sol_available`, `sol_to_glc_quota_exhausted`,
+ * `glc_to_sol_rolling_volume_remaining`, …) and the rolling-volume figures
+ * come from a Solana PDA that bounds the Solana reserve's releases. There
+ * is no Robinhood counterpart on this endpoint, and the backend
+ * deliberately does not apply the Solana window to a Robinhood payout —
+ * doing so "would be a limit that neither chain enforces".
+ *
+ * Typed narrowly rather than widened to `Route` so a Robinhood route
+ * cannot reach these functions at all: the alternative is a silent
+ * else-branch answering every non-`GlcToSol` route with `SolToGlc`'s
+ * numbers, which is exactly the kind of wrong-but-plausible figure this
+ * codebase refuses to display.
+ */
+export type SolanaGovernedRoute = "GlcToSol" | "SolToGlc";
 
 /**
  * Per-direction operational state, derived from `GET /status` exactly the
@@ -25,24 +42,33 @@ export type DirectionGateState =
   | "capacity-constrained";
 
 /** The destination reserve's operator-pause flag for a direction. */
-export function destinationPaused(status: BridgeStatusDto, direction: Direction) {
+export function destinationPaused(
+  status: BridgeStatusDto,
+  direction: SolanaGovernedRoute,
+) {
   return direction === "GlcToSol" ? status.solana_paused : status.goldcoin_paused;
 }
 
-export function quotaExhausted(status: BridgeStatusDto, direction: Direction) {
+export function quotaExhausted(status: BridgeStatusDto, direction: SolanaGovernedRoute) {
   return direction === "GlcToSol"
     ? status.glc_to_sol_quota_exhausted
     : status.sol_to_glc_quota_exhausted;
 }
 
 /** Mint-atomic (6-decimal) headroom left in this direction's 24h window. */
-export function rollingVolumeRemaining(status: BridgeStatusDto, direction: Direction) {
+export function rollingVolumeRemaining(
+  status: BridgeStatusDto,
+  direction: SolanaGovernedRoute,
+) {
   return direction === "GlcToSol"
     ? status.glc_to_sol_rolling_volume_remaining
     : status.sol_to_glc_rolling_volume_remaining;
 }
 
-export function directionAvailable(status: BridgeStatusDto, direction: Direction) {
+export function directionAvailable(
+  status: BridgeStatusDto,
+  direction: SolanaGovernedRoute,
+) {
   return direction === "GlcToSol"
     ? status.glc_to_sol_available
     : status.sol_to_glc_available;
@@ -50,7 +76,7 @@ export function directionAvailable(status: BridgeStatusDto, direction: Direction
 
 export function directionGateState(
   status: BridgeStatusDto,
-  direction: Direction,
+  direction: SolanaGovernedRoute,
 ): DirectionGateState {
   const paused = destinationPaused(status, direction);
   const quota = quotaExhausted(status, direction);
