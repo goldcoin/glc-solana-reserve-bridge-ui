@@ -76,6 +76,7 @@ test.describe("app shell and navigation", () => {
       "/wallets",
       "/faq",
       "/glossary",
+      "/legal/terms",
     ]) {
       await page.goto(path);
       const bodyText = await page.locator("body").innerText();

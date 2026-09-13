@@ -13,6 +13,23 @@ describe("slugify", () => {
   it("trims leading/trailing hyphens", () => {
     expect(slugify("  --Hello--  ")).toBe("hello");
   });
+
+  it("prefixes a slug that would start with a digit", () => {
+    // Legal HTML, illegal CSS: `querySelector("#8-...")` and any `:target`
+    // rule written against it throw a SyntaxError, while fragment
+    // navigation keeps working — so the breakage surfaces long after the
+    // numbered heading was added.
+    expect(slugify("8. $25 abuse and administrative service fee")).toBe(
+      "section-8-25-abuse-and-administrative-service-fee",
+    );
+    expect(slugify("72-hour review")).toBe("section-72-hour-review");
+  });
+
+  it("leaves a slug that already starts with a letter alone", () => {
+    // The existing long-form pages' published anchors must not move.
+    expect(slugify("Bridge fee")).toBe("bridge-fee");
+    expect(slugify("Reserve capacity")).toBe("reserve-capacity");
+  });
 });
 
 describe("buildToc", () => {

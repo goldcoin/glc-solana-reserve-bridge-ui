@@ -17,11 +17,22 @@ import { cn } from "@/lib/utils/cn";
 export function ContentPage({
   title,
   intro,
+  lede,
   sections,
   children,
 }: {
   title: string;
   intro?: string;
+  /**
+   * Optional block rendered under the intro, above the contents/prose row.
+   *
+   * For the one thing a reader must see before they start reading — a
+   * legal page's dates, or a notice that changes what they should do. It
+   * sits in the header rather than as the first child so it stays above the
+   * table of contents on mobile, where the prose column begins below a
+   * collapsed disclosure.
+   */
+  lede?: ReactNode;
   /** Section headings, in document order. Ids are derived from them. */
   sections: readonly string[];
   children: ReactNode;
@@ -33,10 +44,30 @@ export function ContentPage({
       <header className="max-w-prose">
         <h1 className="text-display-lg text-ink-950">{title}</h1>
         {intro && <p className="text-body-lg text-ink-600 mt-3">{intro}</p>}
+        {lede && <div className="mt-6 space-y-4">{lede}</div>}
       </header>
 
       <div className="mt-8 gap-10 md:flex md:items-start">
-        <nav aria-label="On this page" className="md:sticky md:top-8 md:w-56 md:shrink-0">
+        {/*
+          Two properties the sticky column needs on a long page.
+          
+          It sticks BELOW the 64px header (Header.tsx) rather than at the
+          viewport top, which is where `top-8` put it — the first entries
+          of any contents list were sliding under the header and could not
+          be clicked. The offset matches the `scroll-mt` an anchored
+          heading already uses, so a jumped-to heading and the list that
+          jumped there clear the same chrome.
+          
+          And it scrolls within itself once its list is taller than the
+          screen. A thirty-six-clause legal page is the case that needs it:
+          without a bound, a sticky element taller than the viewport pins
+          its TOP and the last entries are simply unreachable. Shorter
+          pages never reach the bound, so their list is unchanged.
+        */}
+        <nav
+          aria-label="On this page"
+          className="md:sticky md:top-20 md:max-h-[calc(100vh-6rem)] md:w-56 md:shrink-0 md:overflow-y-auto"
+        >
           <details className="border-ink-200 rounded-md border md:border-0" open={false}>
             <summary className="text-body-sm text-ink-700 cursor-pointer px-4 py-3 md:hidden">
               Contents

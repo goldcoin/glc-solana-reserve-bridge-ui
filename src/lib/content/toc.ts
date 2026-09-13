@@ -18,14 +18,24 @@ export interface ContentSection {
  * Diacritics are folded, punctuation dropped, spaces hyphenated. Deliberately
  * conservative: an anchor containing anything that needs encoding is an anchor
  * that breaks when pasted into a chat client.
+ *
+ * A slug that would start with a digit is prefixed, because a numbered
+ * heading ("8. $25 abuse and administrative service fee" on the terms page)
+ * otherwise yields an id that is legal HTML but NOT a legal CSS identifier:
+ * `document.querySelector("#8-25-...")` throws, and so does any `:target`
+ * rule written the obvious way. Fragment navigation itself still works,
+ * which is what makes this the kind of breakage that gets found late. No
+ * existing heading starts with a digit, so no published anchor changes.
  */
 export function slugify(heading: string): string {
-  return heading
+  const slug = heading
     .normalize("NFD")
     .replace(/[̀-ͯ]/g, "")
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "");
+
+  return /^\d/.test(slug) ? `section-${slug}` : slug;
 }
 
 /**
