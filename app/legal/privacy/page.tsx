@@ -38,8 +38,8 @@ import { slugify } from "@/lib/content/toc";
  * No domain is hardcoded, per src/lib/config/env.ts.
  */
 
-export const EFFECTIVE_DATE = "September 13, 2026";
-export const LAST_UPDATED = "September 13, 2026";
+export const EFFECTIVE_DATE = "September 12, 2026";
+export const LAST_UPDATED = "September 12, 2026";
 
 export const metadata: Metadata = {
   title: "Privacy Policy",

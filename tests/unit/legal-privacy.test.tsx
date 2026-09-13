@@ -89,11 +89,11 @@ describe("document structure", () => {
 
   it("carries the effective date and last-updated date, both visible", () => {
     render(<PrivacyPage />);
-    expect(EFFECTIVE_DATE).toBe("September 13, 2026");
-    expect(LAST_UPDATED).toBe("September 13, 2026");
+    expect(EFFECTIVE_DATE).toBe("September 12, 2026");
+    expect(LAST_UPDATED).toBe("September 12, 2026");
     expect(screen.getByText("Effective date:")).toBeInTheDocument();
     expect(screen.getByText("Last updated:")).toBeInTheDocument();
-    expect(screen.getAllByText("September 13, 2026")).toHaveLength(2);
+    expect(screen.getAllByText("September 12, 2026")).toHaveLength(2);
   });
 
   it("renders no image in place of a section", () => {
