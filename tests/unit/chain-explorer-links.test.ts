@@ -188,3 +188,79 @@ describe("nothing is guessed", () => {
     }
   });
 });
+
+/**
+ * The one link that must exist whether or not this deployment configured a
+ * template.
+ *
+ * A manual refund was paid outside the bridge's own machinery, so its
+ * signature is the only public evidence the user's money came back. No
+ * deployment on record sets `NEXT_PUBLIC_SOLANA_EXPLORER_TX_URL`, which is
+ * why the template-or-nothing rule that is right everywhere else would have
+ * left exactly that figure as unclickable base58.
+ *
+ * The default is not a guess: `explorer.solana.com` is the network's own
+ * explorer and the cluster comes from the same `NEXT_PUBLIC_SOLANA_CLUSTER`
+ * this build signs and submits against.
+ */
+describe("solanaTxUrlOrDefault", () => {
+  async function withCluster(cluster: string, configured = false) {
+    vi.resetModules();
+    vi.stubEnv("NEXT_PUBLIC_SOLANA_CLUSTER", cluster);
+    if (configured) vi.stubEnv("NEXT_PUBLIC_SOLANA_EXPLORER_TX_URL", TX.solana);
+    return import("@/lib/config/links");
+  }
+
+  it("prefers this deployment's own template when one is configured", async () => {
+    const { solanaTxUrlOrDefault } = await withCluster("mainnet-beta", true);
+    expect(solanaTxUrlOrDefault(SOLANA_SIGNATURE)).toBe(
+      `https://explorer.solana.test/tx/${SOLANA_SIGNATURE}`,
+    );
+  });
+
+  it("falls back to the network's own explorer, on mainnet, with no cluster query", async () => {
+    const { solanaTxUrlOrDefault } = await withCluster("mainnet-beta");
+    expect(solanaTxUrlOrDefault(SOLANA_SIGNATURE)).toBe(
+      `https://explorer.solana.com/tx/${SOLANA_SIGNATURE}`,
+    );
+  });
+
+  it("names a non-mainnet cluster rather than silently linking to mainnet", async () => {
+    // A devnet signature opened on mainnet shows "transaction not found",
+    // which reads as "this refund never happened".
+    for (const cluster of ["devnet", "testnet"] as const) {
+      const { solanaTxUrlOrDefault } = await withCluster(cluster);
+      expect(solanaTxUrlOrDefault(SOLANA_SIGNATURE)).toBe(
+        `https://explorer.solana.com/tx/${SOLANA_SIGNATURE}?cluster=${cluster}`,
+      );
+    }
+  });
+
+  it("reaches a localnet through cluster=custom and this build's own RPC", async () => {
+    vi.resetModules();
+    vi.stubEnv("NEXT_PUBLIC_SOLANA_CLUSTER", "localnet");
+    vi.stubEnv("NEXT_PUBLIC_SOLANA_RPC_URL", "http://127.0.0.1:8899");
+    const { solanaTxUrlOrDefault } = await import("@/lib/config/links");
+    const url = new URL(solanaTxUrlOrDefault(SOLANA_SIGNATURE));
+    expect(url.searchParams.get("cluster")).toBe("custom");
+    expect(url.searchParams.get("customUrl")).toBe("http://127.0.0.1:8899");
+  });
+
+  it("never returns null, and never returns a URL missing the signature", async () => {
+    for (const cluster of ["mainnet-beta", "devnet", "testnet", "localnet"] as const) {
+      const { solanaTxUrlOrDefault } = await withCluster(cluster);
+      const url = solanaTxUrlOrDefault(SOLANA_SIGNATURE);
+      expect(url).toBeTruthy();
+      expect(url).toContain(SOLANA_SIGNATURE);
+      expect(new URL(url).protocol).toBe("https:");
+    }
+  });
+
+  it("leaves the template-driven builders returning null when unconfigured", async () => {
+    // The default is scoped to this one call site. Source and destination
+    // transactions keep the plain-text-when-unconfigured behaviour.
+    const { solanaTxUrl, chainTxUrl } = await withCluster("mainnet-beta");
+    expect(solanaTxUrl(SOLANA_SIGNATURE)).toBeNull();
+    expect(chainTxUrl("solana", SOLANA_SIGNATURE)).toBeNull();
+  });
+});

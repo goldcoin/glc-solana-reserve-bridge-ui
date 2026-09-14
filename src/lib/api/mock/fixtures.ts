@@ -11,7 +11,12 @@ import type { ChainsViewDto } from "../schemas/chains";
 import type { Route } from "../schemas/common";
 import type { ExplorerEventDto } from "../schemas/explorer";
 import type { ReserveHistoryEntryDto } from "../schemas/reserves";
-import type { TransferViewDto, RefundViewDto, RequestState } from "../schemas/transfer";
+import type {
+  ManualRefundViewDto,
+  TransferViewDto,
+  RefundViewDto,
+  RequestState,
+} from "../schemas/transfer";
 import { isRefundState } from "@/lib/bridge";
 
 /**
@@ -681,6 +686,9 @@ const SAMPLE_STATES: readonly RequestState[] = [
   // fixture's id is `1000 + index`, and the e2e specs address these
   // transfers by id.
   "Refunded",
+  // The out-of-band close — production #4361's shape. Appended for the same
+  // reason, so ids 1000-1009 keep meaning what the e2e specs say they mean.
+  "Closed",
 ];
 
 const MANUAL_REVIEW_REASON =
@@ -703,6 +711,46 @@ const REFUND_CHAIN: readonly {
   { from: "RefundPending", to: "RefundBroadcast", reason: "glc_refund_broadcast" },
   { from: "RefundBroadcast", to: "Refunded", reason: null },
 ];
+
+/**
+ * A manually refunded, then closed request — production #4361 reproduced in
+ * mock mode, so the shape that used to render "The bridge returned data this
+ * page could not read" is something a developer can open locally.
+ *
+ * The signature is #4361's real one. Everything about it is public: it is on
+ * Solana mainnet, it is what the production explorer links to, and a fixture
+ * carrying a made-up base58 string would be a fixture that never proves the
+ * link works.
+ */
+const MANUAL_REFUND_SIGNATURE =
+  "3NzHem3knwoaPef5WJuWTD442tLHP1SfuaevUXHezQoiWCxvXiCwNWX3aMeExJ3AWpon9crTBR8a3Mek6SXbrcbZ";
+
+const MANUAL_REFUND_MINT = "Hn6Kdxs6cJrXDLvArAief8ueTgdZLkRacLPPUZo2pump";
+
+/**
+ * The record the backend attaches to a closed, hand-refunded request.
+ *
+ * The full deposit goes back: a request that never settled was never charged
+ * a bridge fee, which is why `gross` and the refund agree here and why the
+ * page says no fee applied.
+ */
+function manualRefundFixture(gross: bigint, at: number): ManualRefundViewDto {
+  return {
+    status: "MANUALLY_REFUNDED",
+    network: "solana",
+    refund_amount_atomic: gross.toString(),
+    // The same amount at the SPL token's 6 decimals rather than the ledger's
+    // 8 — exactly the pair the real payload carries.
+    refund_amount_native_atomic: (gross / 100n).toString(),
+    mint: MANUAL_REFUND_MINT,
+    tx_signature: MANUAL_REFUND_SIGNATURE,
+    slot: 447_038_412,
+    refunded_at: at,
+    // The import always trails the refund itself: the operator sends first
+    // and the bridge reads the transaction afterwards.
+    imported_at: at + 900,
+  };
+}
 
 export function transfersFixture(): TransferViewDto[] {
   const base = NOW_UNIX();
@@ -731,6 +779,14 @@ export function transfersFixture(): TransferViewDto[] {
       // attaches it (`RefundView` in service/src/api.rs): a settled or
       // in-flight transfer has no refund to describe.
       refund: isRefundState(state) ? refundFixture(direction, gross, state) : null,
+      // Attached only to the out-of-band close, exactly as the backend does:
+      // a settled, in-flight or automatically refunded request has no
+      // hand-sent refund to describe.
+      manual_refund:
+        state === "Closed"
+          ? manualRefundFixture(gross, base - (SAMPLE_STATES.length - index) * 900 + 600)
+          : null,
+      disposition: state === "Closed" ? "refunded_out_of_band" : null,
     };
   });
 }
@@ -801,6 +857,29 @@ export function explorerEventsFixture(): ExplorerEventDto[] {
           at: transfer.created_at + 300 * (index + 1),
           reason: step.reason,
         });
+      });
+    } else if (transfer.state === "Closed" && transfer.manual_refund !== null) {
+      // The out-of-band close, as production writes it: the request parks in
+      // `ManualReview`, the operator sends the deposit back by hand, and the
+      // close names the disposition and the transaction it was closed
+      // against in its own `reason` string.
+      events.push({
+        id: id++,
+        request_id: transfer.id,
+        direction: transfer.direction,
+        from_state: "AwaitingDeposit",
+        to_state: "ManualReview",
+        at: transfer.created_at + 300,
+        reason: MANUAL_REVIEW_REASON,
+      });
+      events.push({
+        id: id++,
+        request_id: transfer.id,
+        direction: transfer.direction,
+        from_state: "ManualReview",
+        to_state: "Closed",
+        at: transfer.created_at + 600,
+        reason: `closed:${transfer.disposition ?? "refunded_out_of_band"} reference=${transfer.manual_refund.tx_signature}`,
       });
     } else if (transfer.state !== "AwaitingDeposit") {
       events.push({
@@ -873,6 +952,8 @@ export function robinhoodTransfersFixture(): TransferViewDto[] {
       destination_txid: ROBINHOOD_TX_HASH,
       failure_reason: null,
       refund: null,
+      manual_refund: null,
+      disposition: null,
     },
     {
       id: 2001,
@@ -887,6 +968,8 @@ export function robinhoodTransfersFixture(): TransferViewDto[] {
       destination_txid: null,
       failure_reason: null,
       refund: null,
+      manual_refund: null,
+      disposition: null,
     },
     {
       id: 2002,
@@ -901,6 +984,8 @@ export function robinhoodTransfersFixture(): TransferViewDto[] {
       failure_reason: MANUAL_REVIEW_REASON,
       // Absent BY DESIGN for this route — see this block's doc.
       refund: null,
+      manual_refund: null,
+      disposition: null,
     },
     {
       id: 2003,
@@ -914,6 +999,8 @@ export function robinhoodTransfersFixture(): TransferViewDto[] {
       destination_txid: null,
       failure_reason: null,
       refund: null,
+      manual_refund: null,
+      disposition: null,
     },
   ];
 }
