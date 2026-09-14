@@ -112,14 +112,19 @@ export {
   isFailureState,
   isManualReview,
   isRefundState,
+  isClosedState,
   isInFlightState,
+  isManuallyRefunded,
+  manualRefundOf,
   stepperStatusesFor,
   isKnownRequestState,
   transitionLabel,
   happyPathFor,
+  MANUAL_REFUND_DISPOSITION,
+  MANUAL_REFUND_STATUS,
   REQUEST_STATE_LABELS,
 } from "./state";
-export type { RefundState } from "./state";
+export type { ManualRefundFacts, RefundState } from "./state";
 
 export {
   directionGateState,

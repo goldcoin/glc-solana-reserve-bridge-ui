@@ -29,6 +29,67 @@ export function solanaAddressUrl(address: string): string | null {
   return build(env.solanaExplorerAddressUrl, address);
 }
 
+/**
+ * Where a Solana signature is verifiable when this deployment has configured
+ * no `NEXT_PUBLIC_SOLANA_EXPLORER_TX_URL` template.
+ *
+ * # Why this one chain gets a default at all
+ *
+ * The rule above — return `null` rather than a guessed URL — exists because
+ * a guessed HOST is a link to nowhere, or worse, to someone else's site.
+ * That risk does not apply here: `explorer.solana.com` is the network's own
+ * first-party explorer, its `/tx/{signature}` path is stable, and the
+ * cluster is not guessed either — it is read from the same
+ * `NEXT_PUBLIC_SOLANA_CLUSTER` the app already signs and submits against, so
+ * the link can only ever point at the cluster this build is talking to.
+ *
+ * # Why a plain string is not good enough here
+ *
+ * A manual refund was paid outside the bridge's own machinery. The signature
+ * is therefore the ONLY public evidence that the user's money came back, and
+ * a page that states "your 50,000 GLC was returned" while making that
+ * evidence an uncopyable-looking wall of base58 is asking to be taken on
+ * faith. It is used for that one figure, not for source/destination
+ * transactions, which stay template-driven exactly as before.
+ */
+const SOLANA_EXPLORER_TX_BASE = "https://explorer.solana.com/tx";
+
+/**
+ * `explorer.solana.com` addresses mainnet with no query at all, names devnet
+ * and testnet explicitly, and reaches anything else through `cluster=custom`
+ * plus the RPC it should talk to.
+ */
+function solanaExplorerClusterQuery(): string {
+  switch (env.solanaCluster) {
+    case "mainnet-beta":
+      return "";
+    case "devnet":
+      return "?cluster=devnet";
+    case "testnet":
+      return "?cluster=testnet";
+    case "localnet":
+      // `customUrl` is what makes `cluster=custom` resolve to anything at
+      // all, but the RPC is optional configuration — omitted, the explorer
+      // falls back to its own localhost default, which is the right guess
+      // for a localnet and still not one this code invented.
+      return env.solanaRpcUrl
+        ? `?cluster=custom&customUrl=${encodeURIComponent(env.solanaRpcUrl)}`
+        : "?cluster=custom";
+  }
+}
+
+/**
+ * A Solana transaction link that is always present: this deployment's
+ * configured template when it has one, and the network's own explorer at the
+ * configured cluster otherwise. See {@link SOLANA_EXPLORER_TX_BASE}.
+ */
+export function solanaTxUrlOrDefault(signature: string): string {
+  return (
+    solanaTxUrl(signature) ??
+    `${SOLANA_EXPLORER_TX_BASE}/${encodeURIComponent(signature)}${solanaExplorerClusterQuery()}`
+  );
+}
+
 export function robinhoodTxUrl(hash: string): string | null {
   return build(env.robinhoodExplorerTxUrl, hash);
 }

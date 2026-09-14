@@ -457,3 +457,278 @@ describe("TransferDetail — #4099 settlement progress", () => {
     expect(screen.queryByText(/still being rolled out/i)).not.toBeInTheDocument();
   });
 });
+
+/**
+ * Regression cover for production request #4361, and for the class of
+ * request it belongs to.
+ *
+ * `GET /transfers/4361` answers `state: "Closed"` with a `manual_refund`
+ * record: the request could not settle, an operator sent the 50,000 GLC
+ * deposit back by hand on Solana, and the refund transaction was imported
+ * against the request afterwards. The state was not in `requestStateSchema`,
+ * so the response failed validation at the boundary and the public explorer
+ * rendered "The bridge returned data this page could not read" — on a page
+ * whose entire job was to show the user their money had come back.
+ */
+const SIGNATURE_4361 =
+  "3NzHem3knwoaPef5WJuWTD442tLHP1SfuaevUXHezQoiWCxvXiCwNWX3aMeExJ3AWpon9crTBR8a3Mek6SXbrcbZ";
+
+/** 50,000 GLC returned, against a 50,000 GLC request quoted at 6%. */
+const CLOSED_GROSS = "5000000000000";
+const CLOSED_QUOTED_FEE = "300000000000"; // 3,000 GLC, never charged
+const CLOSED_QUOTED_NET = "4700000000000"; // 47,000 GLC, never delivered
+const REFUNDED_AT = 1_789_408_436;
+
+function transfer4361(
+  overrides: Partial<TransferViewDto> = {},
+  refundOverrides: Partial<NonNullable<TransferViewDto["manual_refund"]>> = {},
+): TransferViewDto {
+  return transferWith({
+    id: 4361,
+    direction: "SolToGlc",
+    state: "Closed",
+    gross_amount_atomic: CLOSED_GROSS,
+    fee_bps: 600,
+    fee_amount_atomic: CLOSED_QUOTED_FEE,
+    net_amount_atomic: CLOSED_QUOTED_NET,
+    source_txid: null,
+    source_confirmations: 1,
+    required_source_confirmations: null,
+    destination_txid: null,
+    failure_reason: null,
+    refund: null,
+    manual_refund: {
+      status: "MANUALLY_REFUNDED",
+      network: "solana",
+      refund_amount_atomic: CLOSED_GROSS,
+      refund_amount_native_atomic: "50000000000",
+      mint: "Hn6Kdxs6cJrXDLvArAief8ueTgdZLkRacLPPUZo2pump",
+      tx_signature: SIGNATURE_4361,
+      slot: 447_038_412,
+      refunded_at: REFUNDED_AT,
+      imported_at: 1_789_409_379,
+      ...refundOverrides,
+    },
+    disposition: null,
+    ...overrides,
+  });
+}
+
+/**
+ * The rendered text of one `dt`/`dd` pair.
+ *
+ * Asserting on the pair rather than on a bare string is what makes "Refund
+ * amount: 50,000 GLC" a real assertion: the requested amount on this transfer
+ * is also 50,000 GLC, so a lone `getByText("50,000.00")` would pass even if
+ * the refund figure were missing entirely.
+ */
+function fact(label: string): string {
+  return screen.getByText(label).parentElement?.textContent ?? "";
+}
+
+describe("TransferDetail — a manually refunded transfer", () => {
+  it("renders #4361 instead of failing to read it", async () => {
+    getTransfer.mockResolvedValue(transfer4361());
+    renderWithQueryClient(<TransferDetail id={4361} />);
+
+    // The four facts the page owes the user, in their own words.
+    expect(await screen.findAllByText(/manually refunded/i)).not.toHaveLength(0);
+    expect(fact("Refund amount")).toContain("50,000.00");
+    expect(fact("Refund amount")).toContain("GLC");
+    expect(fact("Network")).toContain("Solana");
+    expect(fact("Transaction ID")).toContain(SIGNATURE_4361);
+    expect(fact("Refunded at")).toContain(new Date(REFUNDED_AT * 1000).toLocaleString());
+  });
+
+  it("shows the refunded principal and none of the settlement quote", async () => {
+    // #2477's defect, on #4361's shape: the quote's 6% fee was never charged
+    // and its 47,000 GLC net was never delivered, so neither may appear
+    // beside the 50,000 GLC that actually went back.
+    getTransfer.mockResolvedValue(transfer4361());
+    renderWithQueryClient(<TransferDetail id={4361} />);
+
+    await screen.findByText("Refund amount");
+    expect(screen.queryByText("47,000.00")).not.toBeInTheDocument();
+    expect(screen.queryByText("3,000.00")).not.toBeInTheDocument();
+    expect(screen.queryByText(/You receive/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Bridge fee \(6%\)/i)).not.toBeInTheDocument();
+    expect(screen.getByText(/no bridge fee was charged/i)).toBeInTheDocument();
+  });
+
+  it("presents the refund as an outcome, never as a failure", async () => {
+    getTransfer.mockResolvedValue(transfer4361());
+    renderWithQueryClient(<TransferDetail id={4361} />);
+
+    await screen.findByText(/this transfer was manually refunded/i);
+    // The funds are already back. Danger copy would tell the user otherwise.
+    expect(screen.queryByText(/did not settle \(/i)).not.toBeInTheDocument();
+    expect(
+      screen.queryByText(/no further automatic action will occur/i),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("does not show the happy-path stepper for a closed transfer", async () => {
+    getTransfer.mockResolvedValue(transfer4361());
+    renderWithQueryClient(<TransferDetail id={4361} />);
+
+    await screen.findByText(/this transfer was manually refunded/i);
+    // Every step would render unmarked, implying the transfer is still on
+    // its way to settling. It is not: it is finished and refunded.
+    expect(screen.queryByText("Awaiting your deposit")).not.toBeInTheDocument();
+    expect(screen.queryByText("Sending your funds")).not.toBeInTheDocument();
+    expect(
+      screen.queryByText(/progressing through the settlement pipeline/i),
+    ).not.toBeInTheDocument();
+  });
+
+  it("links the signature to the Solana explorer", async () => {
+    getTransfer.mockResolvedValue(transfer4361());
+    renderWithQueryClient(<TransferDetail id={4361} />);
+
+    const link = await screen.findByRole("link", { name: SIGNATURE_4361 });
+    expect(link).toHaveAttribute("href", expect.stringContaining("explorer.solana.com"));
+    expect(link).toHaveAttribute("href", expect.stringContaining(SIGNATURE_4361));
+    // Opening a third-party explorer must not hand it this page's window.
+    expect(link).toHaveAttribute("rel", "noreferrer");
+  });
+
+  it("says so rather than inventing a timestamp the import never recorded", async () => {
+    getTransfer.mockResolvedValue(transfer4361({}, { refunded_at: null }));
+    renderWithQueryClient(<TransferDetail id={4361} />);
+
+    expect(await screen.findByText("Refunded at")).toBeInTheDocument();
+    expect(screen.getByText(/not recorded/i)).toBeInTheDocument();
+    // `imported_at` is when the bridge READ the refund, not when it
+    // happened, so it must not be substituted in.
+    expect(
+      screen.queryByText(new Date(1_789_409_379 * 1000).toLocaleString()),
+    ).not.toBeInTheDocument();
+  });
+
+  it("quotes the backend when the record's status is one it cannot vouch for", async () => {
+    getTransfer.mockResolvedValue(transfer4361({}, { status: "RETURNED_BY_OPERATOR" }));
+    renderWithQueryClient(<TransferDetail id={4361} />);
+
+    // The figures are the backend's own and are still shown; the headline
+    // stops short of asserting a refund in this UI's own voice.
+    expect(await screen.findByText(/RETURNED_BY_OPERATOR/)).toBeInTheDocument();
+    expect(fact("Refund amount")).toContain("50,000.00");
+    expect(
+      screen.queryByText(/this transfer was manually refunded/i),
+    ).not.toBeInTheDocument();
+  });
+
+  it("accepts the disposition as corroboration for an unfamiliar status", async () => {
+    getTransfer.mockResolvedValue(
+      transfer4361(
+        { disposition: "refunded_out_of_band" },
+        { status: "RETURNED_BY_OPERATOR" },
+      ),
+    );
+    renderWithQueryClient(<TransferDetail id={4361} />);
+
+    expect(
+      await screen.findByText(/this transfer was manually refunded/i),
+    ).toBeInTheDocument();
+  });
+
+  it("does not claim a refund for a closed transfer that reports none", async () => {
+    getTransfer.mockResolvedValue(transfer4361({ manual_refund: null }));
+    renderWithQueryClient(<TransferDetail id={4361} />);
+
+    expect(await screen.findByText(/closed without settling/i)).toBeInTheDocument();
+    expect(screen.queryByText(/manually refunded/i)).not.toBeInTheDocument();
+    // No refund record means no amount to state — and still no reaching for
+    // the quote's fee and net, which describe a settlement that never was.
+    expect(screen.queryByText("47,000.00")).not.toBeInTheDocument();
+    expect(screen.queryByText(/You receive/i)).not.toBeInTheDocument();
+    expect(fact("You requested")).toContain("50,000.00");
+  });
+
+  it("fails safely when the bridge sends a manual refund this build cannot read", async () => {
+    // The component never sees the payload: `getTransfer` validates it, and a
+    // record whose amount or signature cannot be trusted is refused at the
+    // boundary rather than rendered with a guessed figure.
+    const { validationError } = await import("@/lib/api/errors");
+    getTransfer.mockRejectedValue(
+      validationError("/transfers/4361", new Error("manual_refund.tx_signature")),
+    );
+    renderWithQueryClient(<TransferDetail id={4361} />);
+
+    expect(await screen.findByText(/data this page could not read/i)).toBeInTheDocument();
+    expect(screen.queryByText(/manually refunded/i)).not.toBeInTheDocument();
+    expect(screen.queryByText("50,000.00")).not.toBeInTheDocument();
+  });
+});
+
+/**
+ * The states that already worked must keep working. A new terminal state and
+ * a new optional field are exactly the kind of change that quietly re-routes
+ * an existing branch.
+ */
+describe("TransferDetail — existing states are unchanged by the manual-refund path", () => {
+  it("still renders a settled transfer with its full settlement trio", async () => {
+    getTransfer.mockResolvedValue(
+      transferWith({
+        id: 40,
+        state: "Settled",
+        direction: "GlcToSol",
+        gross_amount_atomic: "5000000000000",
+        fee_bps: 600,
+        fee_amount_atomic: "300000000000",
+        net_amount_atomic: "4700000000000",
+        destination_txid: "c".repeat(64),
+      }),
+    );
+    renderWithQueryClient(<TransferDetail id={40} />);
+
+    expect(await screen.findAllByText("Settled")).not.toHaveLength(0);
+    expect(fact("You bridge")).toContain("50,000.00");
+    expect(fact("Bridge fee (6%)")).toContain("3,000.00");
+    expect(fact("You receive")).toContain("47,000.00");
+    expect(screen.queryByText(/manually refunded/i)).not.toBeInTheDocument();
+  });
+
+  it("still walks the automated refund lifecycle, which is a different thing", async () => {
+    for (const [id, state, phrase] of [
+      [41, "RefundPending", /refund for this transfer has been started/i],
+      [42, "RefundBroadcast", /refund for this transfer has been broadcast/i],
+      [43, "Refunded", /this transfer was refunded/i],
+    ] as const) {
+      getTransfer.mockResolvedValue(transfer2477(state));
+      const { unmount } = renderWithQueryClient(<TransferDetail id={id} />);
+
+      expect(await screen.findByText(phrase)).toBeInTheDocument();
+      // An automated refund has no `manual_refund` record and must not be
+      // relabelled as one.
+      expect(screen.queryByText(/manually refunded/i)).not.toBeInTheDocument();
+      expect(screen.queryByText("Network")).not.toBeInTheDocument();
+      unmount();
+      getTransfer.mockReset();
+    }
+  });
+
+  it("still shows the stepper and progress line for an in-flight transfer", async () => {
+    getTransfer.mockResolvedValue(
+      transferWith({ id: 44, state: "SettlementAuthorized", manual_refund: null }),
+    );
+    renderWithQueryClient(<TransferDetail id={44} />);
+
+    expect(
+      await screen.findByText(/progressing through the settlement pipeline/i),
+    ).toBeInTheDocument();
+    expect(screen.getAllByText(/Settlement authorized/i)).not.toHaveLength(0);
+  });
+
+  it("still shows danger copy for a genuine failure", async () => {
+    getTransfer.mockResolvedValue(
+      transferWith({ id: 45, state: "Failed", failure_reason: "destination rejected" }),
+    );
+    renderWithQueryClient(<TransferDetail id={45} />);
+
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent(/did not settle/i);
+    expect(screen.queryByText(/manually refunded/i)).not.toBeInTheDocument();
+  });
+});

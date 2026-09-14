@@ -2,13 +2,18 @@ import { describe, expect, it } from "vitest";
 import { requestStateSchema } from "@/lib/api/schemas/transfer";
 import {
   happyPathFor,
+  isClosedState,
   isFailureState,
   isKnownRequestState,
+  isManuallyRefunded,
   isManualReview,
   isRefundState,
   isSuccessState,
   isTerminalState,
   isInFlightState,
+  manualRefundOf,
+  MANUAL_REFUND_DISPOSITION,
+  MANUAL_REFUND_STATUS,
   REQUEST_STATE_LABELS,
   transitionLabel,
 } from "@/lib/bridge/state";
@@ -42,6 +47,11 @@ describe("RequestState classification", () => {
         "DestinationSubmissionFailed",
         "Refunded",
         "Failed",
+        // The operator-driven close. Terminal because nothing further will
+        // happen to the request, and deliberately absent from the failure
+        // list below — #4361 was closed because its deposit had already gone
+        // back.
+        "Closed",
       ].sort(),
     );
   });
@@ -84,6 +94,87 @@ describe("RequestState classification", () => {
       expect(isManualReview(state)).toBe(false);
       expect(isInFlightState(state)).toBe(false);
     }
+  });
+
+  it("parses Closed, the state production #4361 is actually in", () => {
+    // The whole defect: `GET /transfers/4361` answers `state: "Closed"`, the
+    // enum did not list it, and one invalid_value issue took the entire
+    // public explorer page down with "data this page could not read".
+    expect(requestStateSchema.safeParse("Closed").success).toBe(true);
+    expect(allStates).toContain("Closed");
+    expect(isKnownRequestState("Closed")).toBe(true);
+    expect(REQUEST_STATE_LABELS.Closed).toBeTruthy();
+  });
+
+  it("treats Closed as terminal, and as neither a failure nor a success", () => {
+    expect(isClosedState("Closed")).toBe(true);
+    expect(isTerminalState("Closed")).toBe(true);
+    // Both directions matter. Danger copy on a closed transfer tells a user
+    // whose money is already back that their funds may be lost; a success
+    // badge claims a settlement that never happened.
+    expect(isFailureState("Closed")).toBe(false);
+    expect(isSuccessState("Closed")).toBe(false);
+    expect(isManualReview("Closed")).toBe(false);
+    expect(isRefundState("Closed")).toBe(false);
+    expect(isInFlightState("Closed")).toBe(false);
+  });
+
+  it("names the out-of-band close as what happened, not as two state names", () => {
+    expect(transitionLabel("ManualReview", "Closed")).toBe("Refunded by hand and closed");
+  });
+});
+
+/**
+ * The manual-refund record, and when this UI may speak in its own voice about
+ * it. `manual_refund` carries an amount, a network and a signature the page
+ * states as fact, so "is this a manual refund" is a real predicate over the
+ * payload rather than a state-name check.
+ */
+describe("manual refund recognition", () => {
+  const record = {
+    status: MANUAL_REFUND_STATUS,
+    network: "solana",
+    refund_amount_atomic: "5000000000000",
+    refund_amount_native_atomic: "50000000000",
+    mint: "Hn6Kdxs6cJrXDLvArAief8ueTgdZLkRacLPPUZo2pump",
+    tx_signature:
+      "3NzHem3knwoaPef5WJuWTD442tLHP1SfuaevUXHezQoiWCxvXiCwNWX3aMeExJ3AWpon9crTBR8a3Mek6SXbrcbZ",
+    slot: 447_038_412,
+    refunded_at: 1_789_408_436,
+    imported_at: 1_789_409_379,
+  };
+
+  it("recognises #4361's own shape", () => {
+    const transfer = { manual_refund: record, disposition: null };
+    expect(manualRefundOf(transfer)).toBe(record);
+    expect(isManuallyRefunded(transfer)).toBe(true);
+  });
+
+  it("accepts the disposition as corroboration when the status is unfamiliar", () => {
+    const transfer = {
+      manual_refund: { ...record, status: "RETURNED_BY_OPERATOR" },
+      disposition: MANUAL_REFUND_DISPOSITION,
+    };
+    expect(isManuallyRefunded(transfer)).toBe(true);
+  });
+
+  it("will not claim a refund from a disposition with no record behind it", () => {
+    // A disposition names no amount, no network and no transaction. A
+    // headline with nothing under it is not worth the claim.
+    const transfer = { manual_refund: null, disposition: MANUAL_REFUND_DISPOSITION };
+    expect(manualRefundOf(transfer)).toBeNull();
+    expect(isManuallyRefunded(transfer)).toBe(false);
+  });
+
+  it("still surfaces a record it cannot vouch for, without claiming it", () => {
+    const transfer = {
+      manual_refund: { ...record, status: "SOMETHING_NEW" },
+      disposition: null,
+    };
+    // The figures are the backend's own and are still rendered; what is
+    // withheld is this UI asserting "manually refunded" in its own words.
+    expect(manualRefundOf(transfer)).not.toBeNull();
+    expect(isManuallyRefunded(transfer)).toBe(false);
   });
 });
 

@@ -94,6 +94,30 @@ export const requestStateStatus: Record<RequestState, StatusDescriptor> = {
   RefundBroadcast: { label: "Refund broadcast", tone: "info", icon: RotateCcw },
   Refunded: { label: "Refunded", tone: "neutral", icon: CircleCheck },
   Failed: { label: "Failed", tone: "danger", icon: CircleX },
+  /**
+   * `Closed` on its own says only that the bridge stopped working the
+   * request; what happened to the deposit rides on the disposition beside
+   * it. Neutral is the only honest tone for that: danger would claim a loss
+   * the state does not assert, and success would claim a settlement that
+   * never happened. A closed transfer that was manually refunded gets
+   * {@link manuallyRefundedStatus} instead.
+   */
+  Closed: { label: "Closed", tone: "neutral", icon: CircleSlash },
+};
+
+/**
+ * The badge for a `Closed` transfer whose deposit was returned by hand.
+ *
+ * Its own descriptor rather than a `RequestState` entry, because it is not a
+ * state: it is `Closed` plus the manual-refund record, and only the pair
+ * earns the claim. Neutral for the same reason `Refunded` is — the user's
+ * funds came back, which is a real outcome, but it is not the settlement
+ * they asked for and green is reserved for that.
+ */
+export const manuallyRefundedStatus: StatusDescriptor = {
+  label: "Manually refunded",
+  tone: "neutral",
+  icon: RotateCcw,
 };
 
 /**

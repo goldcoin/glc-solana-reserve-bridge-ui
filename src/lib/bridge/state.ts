@@ -1,4 +1,9 @@
-import { requestStateSchema, type RequestState } from "@/lib/api/schemas/transfer";
+import {
+  requestStateSchema,
+  type ManualRefundViewDto,
+  type RequestState,
+  type TransferViewDto,
+} from "@/lib/api/schemas/transfer";
 import type { Route } from "@/lib/api/schemas/common";
 
 /**
@@ -17,6 +22,7 @@ const TERMINAL_STATES = new Set<RequestState>([
   "DestinationSubmissionFailed",
   "Refunded",
   "Failed",
+  "Closed",
 ]);
 
 /**
@@ -57,6 +63,71 @@ export function isFailureState(state: RequestState): boolean {
 
 export function isManualReview(state: RequestState): boolean {
   return state === "ManualReview";
+}
+
+/**
+ * `Closed` — the operator-driven terminal state.
+ *
+ * Deliberately excluded from `isFailureState`. A closed request did not
+ * settle, but "did not settle" is not "your funds are gone": production
+ * #4361 was closed precisely BECAUSE its deposit had already been returned.
+ * Sending it down the failure branch would have shown "This transfer did not
+ * settle (Closed)" over copy telling the user to contact support about funds
+ * that were back in their wallet.
+ *
+ * It is equally not a success, so it is its own classification — the caller
+ * decides what to say from the disposition and the manual-refund facts, not
+ * from the state name alone.
+ */
+export function isClosedState(state: RequestState): boolean {
+  return state === "Closed";
+}
+
+/**
+ * The `manual_refund.status` this build recognises, and the `disposition`
+ * that corroborates it.
+ *
+ * Both are open strings on the wire (see `dispositionSchema` and
+ * `manualRefundViewSchema`), so these constants are what turns a value the
+ * backend sent into a claim this UI is willing to make in the user's own
+ * words. A `manual_refund` carrying neither is still rendered — the figures
+ * are the backend's own — but under the backend's word for it rather than
+ * under "Manually refunded".
+ */
+export const MANUAL_REFUND_STATUS = "MANUALLY_REFUNDED";
+export const MANUAL_REFUND_DISPOSITION = "refunded_out_of_band";
+
+/** The subset of `TransferView` that decides how a closed transfer reads. */
+export type ManualRefundFacts = Pick<TransferViewDto, "manual_refund" | "disposition">;
+
+/**
+ * The manual-refund record for a transfer, or `null` when there is none.
+ *
+ * Presence of the record is the whole test, and deliberately NOT
+ * `state === "Closed"`: the record carries an amount, a network and a
+ * signature that the backend independently verified, and those facts do not
+ * become less true because the request is sitting in a state this build did
+ * not expect them on. The state still decides the surrounding copy.
+ */
+export function manualRefundOf(transfer: ManualRefundFacts): ManualRefundViewDto | null {
+  return transfer.manual_refund;
+}
+
+/**
+ * Whether this UI may state, in its own voice, that the transfer was
+ * manually refunded.
+ *
+ * Requires the facts to be present — a `disposition` on its own says a refund
+ * happened somewhere but names no amount, no network and no transaction, and
+ * a headline with nothing under it is not worth the claim.
+ */
+export function isManuallyRefunded(transfer: ManualRefundFacts): boolean {
+  const manual = transfer.manual_refund;
+  if (manual === null) return false;
+  return (
+    manual.status === MANUAL_REFUND_STATUS ||
+    transfer.disposition === MANUAL_REFUND_DISPOSITION
+  );
 }
 
 export function isRefundState(state: RequestState): state is RefundState {
@@ -148,7 +219,8 @@ export function isInFlightState(state: RequestState): boolean {
     !isTerminalState(state) &&
     !isFailureState(state) &&
     !isManualReview(state) &&
-    !isRefundState(state)
+    !isRefundState(state) &&
+    !isClosedState(state)
   );
 }
 
@@ -172,6 +244,7 @@ export const REQUEST_STATE_LABELS: Record<RequestState, string> = {
   RefundBroadcast: "Refund broadcast",
   Refunded: "Refunded",
   Failed: "Failed",
+  Closed: "Closed",
 };
 
 const KNOWN_REQUEST_STATES: ReadonlySet<string> = new Set<string>(
@@ -205,6 +278,10 @@ const TRANSITION_LABELS: ReadonlyMap<string, string> = new Map([
   ["ManualReview->RefundPending", "Refund started"],
   ["RefundPending->RefundBroadcast", "Refund broadcast"],
   ["RefundBroadcast->Refunded", "Refund confirmed"],
+  // The out-of-band close. "ManualReview -> Closed" reads as a request that
+  // was given up on; "Refunded by hand and closed" is what actually happened
+  // to #4361 and to every other request in that import batch.
+  ["ManualReview->Closed", "Refunded by hand and closed"],
 ]);
 
 export function transitionLabel(from: string | null, to: string): string | null {

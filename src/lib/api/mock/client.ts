@@ -486,8 +486,11 @@ export class MockBridgeClient implements BridgeApiClient {
       required_source_confirmations: 12,
       destination_txid: null,
       failure_reason: null,
-      // A brand-new request has settled nothing and refunded nothing.
+      // A brand-new request has settled nothing and refunded nothing —
+      // automatically or by hand — and has not been closed.
       refund: null,
+      manual_refund: null,
+      disposition: null,
     });
 
     // A distinct mock address per request id, so dev/test flows exercise

@@ -11,17 +11,21 @@ import {
   TokenAmount,
 } from "@/components/ui";
 import { useTransfer } from "@/lib/query/hooks";
-import { requestStateStatus } from "@/lib/status";
+import { manuallyRefundedStatus, requestStateStatus } from "@/lib/status";
 import {
   routeDisplay,
+  displayDescriptorFor,
+  isClosedState,
   isFailureState,
   isManualReview,
+  isManuallyRefunded,
   isRefundState,
   isInFlightState,
+  manualRefundOf,
 } from "@/lib/bridge";
 import type { RefundState } from "@/lib/bridge";
-import type { TransferViewDto } from "@/lib/api/schemas/transfer";
-import { chainTxUrl } from "@/lib/config/links";
+import type { ManualRefundViewDto, TransferViewDto } from "@/lib/api/schemas/transfer";
+import { chainTxUrl, solanaTxUrlOrDefault } from "@/lib/config/links";
 import { GOLDCOIN_DECIMALS } from "@/lib/config/env";
 import { TransferStepper } from "./TransferStepper";
 
@@ -76,6 +80,15 @@ export function TransferDetail({ id }: { id: number }) {
   const sourceChain = display.from.chain.id;
   const destinationChain = display.to.chain.id;
 
+  // A manual refund is the backend's own imported record of a deposit
+  // returned by hand — see `manualRefundViewSchema`. It replaces the
+  // settlement trio and the stepper for the same reason the automated refund
+  // does: a closed request settled nothing, so those three figures are the
+  // quote it was created under, not an outcome.
+  const manualRefund = manualRefundOf(transfer);
+  const manuallyRefunded = isManuallyRefunded(transfer);
+  const closed = isClosedState(transfer.state);
+
   return (
     <Card variant="raised" padding="lg">
       <div className="mb-5 flex flex-wrap items-start justify-between gap-3">
@@ -94,7 +107,11 @@ export function TransferDetail({ id }: { id: number }) {
             </CopyButton>
           </div>
         </div>
-        <StatusBadge status={requestStateStatus[transfer.state]} />
+        <StatusBadge
+          status={
+            manuallyRefunded ? manuallyRefundedStatus : requestStateStatus[transfer.state]
+          }
+        />
       </div>
 
       {isFailureState(transfer.state) && (
@@ -129,9 +146,35 @@ export function TransferDetail({ id }: { id: number }) {
         </Alert>
       )}
 
+      {manualRefund !== null && (
+        <Alert level="info" {...manualRefundCopy(manualRefund, manuallyRefunded)}>
+          {transfer.failure_reason && <p>{transfer.failure_reason}</p>}
+        </Alert>
+      )}
+
+      {/*
+        Closed, with no manual-refund record to explain it. The state alone
+        says the bridge stopped working the request and nothing about where
+        the deposit went, so this says exactly that and sends the user to
+        support — it does not reach for the settlement trio, and it does not
+        guess at a refund nobody reported.
+      */}
+      {closed && manualRefund === null && (
+        <Alert
+          level="warn"
+          title="This transfer was closed without settling."
+          funds="The bridge is no longer working this request. It reports no refund against it here, which does not mean your deposit is lost — it means this page cannot say what happened to it."
+          next="Contact support with this transfer id so the outcome can be confirmed."
+        >
+          {transfer.failure_reason && <p>{transfer.failure_reason}</p>}
+        </Alert>
+      )}
+
       {!isFailureState(transfer.state) &&
         !isManualReview(transfer.state) &&
-        !isRefundState(transfer.state) && (
+        !isRefundState(transfer.state) &&
+        !closed &&
+        manualRefund === null && (
           <TransferStepper
             direction={transfer.direction}
             state={transfer.state}
@@ -157,7 +200,11 @@ export function TransferDetail({ id }: { id: number }) {
       )}
 
       <dl className="border-ink-100 mt-6 grid grid-cols-3 gap-4 border-t pt-4">
-        {isRefundState(transfer.state) ? (
+        {manualRefund !== null ? (
+          <ManualRefundAmounts transfer={transfer} refund={manualRefund} />
+        ) : closed ? (
+          <ClosedAmounts transfer={transfer} />
+        ) : isRefundState(transfer.state) ? (
           <RefundAmounts transfer={transfer} />
         ) : (
           <SettlementAmounts transfer={transfer} />
@@ -412,6 +459,186 @@ function refundCopy(state: RefundState): {
         next: "No action is needed. Contact support with this transfer id if the returned funds have not arrived.",
       };
   }
+}
+
+/**
+ * The amounts panel for a transfer whose deposit was returned BY HAND and
+ * whose request was then closed — production #4361 and the rest of that
+ * import batch.
+ *
+ * Every figure is read off `transfer.manual_refund`, the backend's own
+ * imported record. The settlement trio is not rendered at all, for the reason
+ * `RefundAmounts` spells out and #4361 demonstrates: its `gross`/`fee`/`net`
+ * are 50,000 / 3,000 / 47,000 GLC, the 6% fee was never charged, the 47,000
+ * was never delivered, and the 50,000 below is what the depositor actually
+ * got back. Showing the trio here would present three things that did not
+ * happen beside one that did.
+ *
+ * The amount is rendered at the ledger's canonical 8 decimals like every
+ * other amount on this page, NOT at the paying network's own precision. The
+ * backend sends both (`refund_amount_native_atomic` is the same 50,000 GLC in
+ * the SPL token's 6 decimals); rendering one figure in one unit is what stops
+ * the page contradicting itself.
+ */
+function ManualRefundAmounts({
+  transfer,
+  refund,
+}: {
+  transfer: TransferViewDto;
+  refund: ManualRefundViewDto;
+}) {
+  // Named from the backend's own chain id, never inferred from the route:
+  // #4361 is a `SolToGlc` request refunded on Solana, its SOURCE side, so
+  // anything derived from the direction's destination would print the wrong
+  // network under a signature that proves otherwise. `displayDescriptorFor`
+  // falls back to the raw id for a network this build cannot name, which is
+  // still the backend's own word rather than a guess.
+  const network = displayDescriptorFor(refund.network).name;
+  const signatureUrl =
+    refund.network === "solana"
+      ? // Always a link: the signature is the only public evidence the money
+        // came back, so it stays clickable even where this deployment has
+        // configured no explorer template. See `solanaTxUrlOrDefault`.
+        solanaTxUrlOrDefault(refund.tx_signature)
+      : // Any other network keeps the template-driven rule: a configured
+        // explorer or plain text, never a guessed host.
+        (chainTxUrl(refund.network, refund.tx_signature) ?? undefined);
+
+  return (
+    <>
+      <div>
+        <dt className="text-body-sm text-ink-500">You requested</dt>
+        <dd className="text-ink-600">
+          <TokenAmount
+            raw={transfer.gross_amount_atomic}
+            decimals={GOLDCOIN_DECIMALS}
+            symbol={CANONICAL_SYMBOL}
+          />
+        </dd>
+      </div>
+
+      <div>
+        <dt className="text-body-sm text-ink-500">Refund amount</dt>
+        <dd className="text-ink-950 font-medium">
+          <TokenAmount
+            raw={refund.refund_amount_atomic}
+            decimals={GOLDCOIN_DECIMALS}
+            symbol={CANONICAL_SYMBOL}
+          />
+        </dd>
+      </div>
+
+      <div>
+        <dt className="text-body-sm text-ink-500">Network</dt>
+        <dd className="text-ink-950 font-medium">{network}</dd>
+      </div>
+
+      <div className="border-ink-100 col-span-3 border-t pt-4">
+        <dt className="text-body-sm text-ink-500">Transaction ID</dt>
+        <dd className="mt-0.5 flex flex-wrap items-center justify-between gap-2">
+          {signatureUrl ? (
+            <a
+              href={signatureUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="decoration-ink-300 hover:decoration-ink-600 underline underline-offset-2"
+            >
+              <AddressCompact address={refund.tx_signature} lead={10} tail={8} />
+            </a>
+          ) : (
+            <AddressCompact address={refund.tx_signature} lead={10} tail={8} />
+          )}
+          <CopyButton value={refund.tx_signature} label="refund transaction id" />
+        </dd>
+      </div>
+
+      <div className="col-span-3">
+        <dt className="text-body-sm text-ink-500">Refunded at</dt>
+        <dd className="text-ink-950">
+          {refund.refunded_at === null ? (
+            // The refund is recorded and its transaction is named; only the
+            // timestamp is missing. Saying so beats printing the epoch, and
+            // beats substituting `imported_at`, which is when the bridge
+            // read the refund rather than when the refund happened.
+            <span className="text-ink-500">Not recorded</span>
+          ) : (
+            <time dateTime={new Date(refund.refunded_at * 1000).toISOString()}>
+              {new Date(refund.refunded_at * 1000).toLocaleString()}
+            </time>
+          )}
+        </dd>
+      </div>
+
+      <div className="col-span-3">
+        <dt className="sr-only">Bridge fee</dt>
+        <dd className="text-body-sm text-ink-500">
+          No bridge fee was charged: this transfer did not settle, so the fee never
+          applied and nothing was delivered on the destination chain.
+        </dd>
+      </div>
+    </>
+  );
+}
+
+/**
+ * A `Closed` transfer with no manual-refund record attached.
+ *
+ * Shows the amount the request was created for and nothing else. The fee and
+ * the net belong to a settlement that did not happen, and there is no refund
+ * record to put in their place, so the panel states what it knows and stops —
+ * the same rule `RefundAmounts` applies when `refund` is absent.
+ */
+function ClosedAmounts({ transfer }: { transfer: TransferViewDto }) {
+  return (
+    <>
+      <div>
+        <dt className="text-body-sm text-ink-500">You requested</dt>
+        <dd className="text-ink-600">
+          <TokenAmount
+            raw={transfer.gross_amount_atomic}
+            decimals={GOLDCOIN_DECIMALS}
+            symbol={CANONICAL_SYMBOL}
+          />
+        </dd>
+      </div>
+
+      <div className="col-span-3">
+        <dt className="sr-only">Outcome</dt>
+        <dd className="text-body-sm text-ink-500">
+          No bridge fee was charged and nothing was delivered on the destination chain:
+          this request never reached settlement. The bridge publishes no refund record
+          against it here either.
+        </dd>
+      </div>
+    </>
+  );
+}
+
+/**
+ * Alert copy for a manual refund.
+ *
+ * Informational, never a danger alert: the user's deposit came back, which is
+ * a completed outcome rather than a failure — the same call `refundCopy`
+ * makes for the automated refund lifecycle.
+ *
+ * `recognised` is false when the record carries a `status` this build has
+ * never seen and no `refunded_out_of_band` disposition to corroborate it. The
+ * figures are still the backend's own and are still shown, but the headline
+ * quotes the backend rather than putting words in its mouth — the same
+ * treatment `requestStateDescriptor` gives an unrecognised state name.
+ */
+function manualRefundCopy(
+  refund: ManualRefundViewDto,
+  recognised: boolean,
+): { title: string; funds: string; next: string } {
+  return {
+    title: recognised
+      ? "This transfer was manually refunded."
+      : `This transfer was closed with a refund record (${refund.status}).`,
+    funds:
+      "Your deposit was returned to you directly, outside the bridge's automatic refund path. This transfer did not settle, and the bridge is not holding these funds.",
+    next: "No action is needed. The refund transaction below can be checked on chain; contact support with this transfer id if the returned funds have not arrived.",
+  };
 }
 
 function TxRow({
