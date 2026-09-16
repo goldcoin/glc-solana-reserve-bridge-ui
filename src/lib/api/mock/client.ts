@@ -105,6 +105,15 @@ function quoteAssetName(chainId: string): string {
  * backend computes these with checked integer math and a float here would
  * make the mock disagree with production for large amounts.
  */
+/**
+ * A bridge-rate price of exactly 1.0, in the backend's `e12` fixed-point
+ * (`bridge_rate::PRICE_SCALE`). Both rails carry it under `fixed_unit`.
+ */
+const PRICE_SCALE = 1_000_000_000_000n;
+
+/** `[bridge_rate].quote_lifetime_secs` at its documented default. */
+const QUOTE_LIFETIME_SECS = 60;
+
 function formatDisplay(atomic: bigint, decimals: number): string {
   const scale = 10n ** BigInt(decimals);
   const negative = atomic < 0n;
@@ -272,6 +281,8 @@ export class MockBridgeClient implements BridgeApiClient {
     const net = gross - fee;
     const units = this.quoteUnits(request.direction);
 
+    const quotedAt = Math.floor(this.now().getTime() / 1000);
+
     const output = {
       direction: request.direction,
       gross_amount: gross.toString(),
@@ -281,6 +292,27 @@ export class MockBridgeClient implements BridgeApiClient {
       fee_display_amount: formatDisplay(fee, GOLDCOIN_DECIMALS),
       net_amount: net.toString(),
       net_display_amount: formatDisplay(net, GOLDCOIN_DECIMALS),
+      // The bridge quote a `[bridge_rate] mode = "fixed_unit"` deployment
+      // strikes: both rails priced at `PRICE_SCALE`, so the rate is exactly
+      // 1.0 and `gross_out == gross_in`. The mock deliberately does NOT
+      // invent a live rate — it has no feeds, and a made-up 3.43 here would
+      // be a figure the UI is developed against and production never
+      // serves. What it does pin is the SHAPE, so the rate row, the
+      // unsuffixed fee and the destination-qualified receive line are all
+      // exercised in mock mode.
+      bridge_quote: {
+        bridge_rate: "1.000000000000",
+        source_price_e12: PRICE_SCALE.toString(),
+        destination_price_e12: PRICE_SCALE.toString(),
+        gross_in_amount: gross.toString(),
+        gross_out_amount: gross.toString(),
+        fee_bps: feeBps,
+        bridge_fee_amount: fee.toString(),
+        net_out_amount: net.toString(),
+        dust_amount: "0",
+        quoted_at: quotedAt,
+        quote_expires_at: quotedAt + QUOTE_LIFETIME_SECS,
+      },
       source_decimals: units.source,
       destination_decimals: units.destination,
       source_asset: units.sourceAsset,
@@ -471,6 +503,7 @@ export class MockBridgeClient implements BridgeApiClient {
     const feeBps = fixtures.BRIDGE_FEE_BPS;
     const gross = BigInt(validated.amount_atomic);
     const fee = (gross * BigInt(feeBps)) / 10_000n;
+    const createdAt = Math.floor(this.now().getTime() / 1000);
 
     this.created.set(id, {
       id,
@@ -480,7 +513,24 @@ export class MockBridgeClient implements BridgeApiClient {
       fee_bps: feeBps,
       fee_amount_atomic: fee.toString(),
       net_amount_atomic: (gross - fee).toString(),
-      created_at: Math.floor(this.now().getTime() / 1000),
+      // The INDICATIVE quote `POST /transfers` stores on the new row: what
+      // the deposit would settle at if it were observed this instant, with
+      // no `locked_at` until it actually is. A `fixed_unit` rate of 1.0,
+      // for the reason the quote endpoint above gives.
+      bridge_quote: {
+        bridge_rate: "1.000000000000",
+        source_price_e12: PRICE_SCALE.toString(),
+        destination_price_e12: PRICE_SCALE.toString(),
+        gross_in_amount: gross.toString(),
+        gross_out_amount: gross.toString(),
+        fee_bps: feeBps,
+        bridge_fee_amount: fee.toString(),
+        net_out_amount: (gross - fee).toString(),
+        dust_amount: "0",
+        quoted_at: createdAt,
+        quote_expires_at: createdAt + QUOTE_LIFETIME_SECS,
+      },
+      created_at: createdAt,
       source_txid: null,
       source_confirmations: 0,
       required_source_confirmations: 12,

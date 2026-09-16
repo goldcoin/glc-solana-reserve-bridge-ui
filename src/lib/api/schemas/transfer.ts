@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { bridgeQuoteViewSchema } from "./quote";
 import {
   directionSchema,
   nonNegativeAtomicAmountSchema,
@@ -275,6 +276,22 @@ export const transferViewSchema = z.object({
    * happened.
    */
   disposition: dispositionSchema.nullish().transform((value) => value ?? null),
+  /**
+   * The bridge quote this request carries — see {@link bridgeQuoteViewSchema}
+   * and glc-solana-reserve-bridge `docs/38-elastic-bridge-rate.md`.
+   *
+   * Its `locked_at` says which kind it is. While absent the quote is
+   * INDICATIVE: what the deposit would settle at if it were observed this
+   * instant, not what it will settle at. Once set it is the SETTLEMENT quote
+   * — struck at the first deposit observation for a Goldcoin-sourced request,
+   * at the fold for a contract-sourced one — and is the rate the payout was
+   * actually computed at.
+   *
+   * Absent entirely for a request created before schema v37, whose quote
+   * columns are NULL and which settles at an implicit unit rate. Nothing here
+   * substitutes 1.0 for a missing quote: the rate row is simply not rendered.
+   */
+  bridge_quote: bridgeQuoteViewSchema.nullish().transform((value) => value ?? null),
 });
 
 export type TransferViewDto = z.infer<typeof transferViewSchema>;

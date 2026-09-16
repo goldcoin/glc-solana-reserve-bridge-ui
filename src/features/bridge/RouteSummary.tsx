@@ -4,6 +4,15 @@ import type { RouteAvailability } from "@/lib/bridge";
 import type { ChainDescriptor } from "@/lib/bridge";
 import type { QuoteOutputDto } from "@/lib/api/schemas/quote";
 import { formatDisplayDecimalOrRaw as display } from "@/lib/format/amount";
+import { formatBridgeRateSentence } from "@/lib/format/rate";
+
+/**
+ * GLC on every network this bridge touches. Named once here rather than read
+ * off a descriptor per row, because it is the same three letters on all six
+ * routes — what differs between them is the network, which is stated as a
+ * network.
+ */
+const SYMBOL = "GLC";
 
 /**
  * The metadata under the form: what this transfer is, whether it can
@@ -23,6 +32,14 @@ import { formatDisplayDecimalOrRaw as display } from "@/lib/format/amount";
  * endpoint that runs the server's own `compute_fee`. The availability
  * sentence is the backend's `disabled_reason`, passed through untouched.
  * This component formats; it does not decide.
+ *
+ * That now includes the BRIDGE RATE. `quote.bridge_quote.bridge_rate` is the
+ * rate the server struck this preview at and would settle a real deposit at
+ * (glc-solana-reserve-bridge `docs/38-elastic-bridge-rate.md`); it is the
+ * only rate this component may render. It does not derive one from the two
+ * `*_price_e12` figures, does not derive one from gross and net, and above
+ * all does not fetch a market price from the browser — a rate assembled here
+ * would differ from the one the deposit actually settles at.
  */
 export function RouteSummary({
   source,
@@ -46,6 +63,18 @@ export function RouteSummary({
   requiredConfirmations?: number | undefined;
 }) {
   const status = statusLabel(availability);
+  // The backend's own rate string, formatted to two places and never
+  // recomputed. `null` whenever there is no quote, or the quote carries a
+  // rate this build cannot read exactly — in both cases the row is absent.
+  const rateSentence =
+    quote?.bridge_quote === undefined
+      ? null
+      : formatBridgeRateSentence(
+          quote.bridge_quote.bridge_rate,
+          source.name,
+          destination.name,
+          SYMBOL,
+        );
 
   return (
     // A recessed block on the card's plane rather than a bordered card of
@@ -72,14 +101,41 @@ export function RouteSummary({
           <span>{status}</span>
         </Row>
 
+        {/* The live bridge rate, spelled out as a sentence across both
+            columns. It sits above the fee because it is what the fee and
+            the received amount are both derived from: at a rate of 3.43 a
+            user who reads "You receive" without it has no way to tell a
+            good quote from a bad one.
+
+            Withheld entirely when the backend did not send a quote — a
+            pre-v37 daemon — rather than falling back to 1.0. "We are not
+            showing you a rate" is recoverable; "the rate is 1.00" when it
+            is 3.43 is not. */}
+        {rateSentence !== null && (
+          <Row label="Bridge rate" className="col-span-2">
+            <span className="tabular">{rateSentence}</span>
+          </Row>
+        )}
+
         <Row label="Bridge fee">
           {/* The rate AND the amount. A percentage alone leaves the user to
               do arithmetic this app deliberately refuses to do for itself,
               and both figures are the backend's own — `POST /quote` runs
-              the same `compute_fee` that a real settlement runs. */}
+              the same `compute_fee` that a real settlement runs.
+
+              No network suffix. This used to read "… GLC (Goldcoin)" on a
+              `GlcToSol` quote, which was simply false: the bridge fee is
+              charged and accrued in the DESTINATION asset (decision J-5,
+              `BridgeQuote::fee_out`), so `fee_display_amount` was never a
+              Goldcoin figure. At the Phase 2A fixed rate of 1.0 the wrong
+              label at least named an equal amount; at a live rate of 3.43
+              it names a figure that does not exist on either chain. The
+              destination is stated one row down, on the only figure the
+              user actually receives, so repeating it here would add a
+              second network label to a four-row summary for nothing. */}
           <span className="tabular">
             {quote
-              ? `${formatBps(quote.fee_bps)} · ${display(quote.fee_display_amount)} ${quote.source_asset}`
+              ? `${formatBps(quote.fee_bps)} · ${display(quote.fee_display_amount)} ${SYMBOL}`
               : quotePending
                 ? "…"
                 : "—"}
@@ -87,9 +143,15 @@ export function RouteSummary({
         </Row>
 
         <Row label="You receive">
+          {/* Named with the network, not with `destination_asset`. The
+              backend's string is "GLC (Solana)", which parenthesises the
+              one fact that matters most here; "93,331.52 GLC on Solana"
+              states it. Both sides of every route are GLC, so the network
+              IS the distinguishing fact, and a user who misreads which
+              chain their funds land on has no way to recover them. */}
           <span className="tabular">
             {quote
-              ? `${display(quote.net_display_amount)} ${quote.destination_asset}`
+              ? `${display(quote.net_display_amount)} ${SYMBOL} on ${destination.name}`
               : quotePending
                 ? "…"
                 : "—"}

@@ -27,6 +27,7 @@ import type { RefundState } from "@/lib/bridge";
 import type { ManualRefundViewDto, TransferViewDto } from "@/lib/api/schemas/transfer";
 import { chainTxUrl, solanaTxUrlOrDefault } from "@/lib/config/links";
 import { GOLDCOIN_DECIMALS } from "@/lib/config/env";
+import { formatBridgeRateSentence } from "@/lib/format/rate";
 import { TransferStepper } from "./TransferStepper";
 
 /**
@@ -207,7 +208,11 @@ export function TransferDetail({ id }: { id: number }) {
         ) : isRefundState(transfer.state) ? (
           <RefundAmounts transfer={transfer} />
         ) : (
-          <SettlementAmounts transfer={transfer} />
+          <SettlementAmounts
+            transfer={transfer}
+            sourceNetwork={display.from.chain.name}
+            destinationNetwork={display.to.chain.name}
+          />
         )}
 
         {transfer.source_txid && (
@@ -245,10 +250,48 @@ export function TransferDetail({ id }: { id: number }) {
 
 /**
  * The gross / fee / net trio, for a transfer that is on — or has completed —
- * the settlement path. Unchanged: for a `Settled` transfer these three are
- * exactly what happened.
+ * the settlement path. For a `Settled` transfer these three are exactly what
+ * happened.
+ *
+ * # Which side each figure is in
+ *
+ * `gross_amount_atomic` is what the user SENT, on the source network.
+ * `fee_amount_atomic` and `net_amount_atomic` are the DESTINATION asset
+ * (`BridgeQuote::fee_out`/`net_out`, decision J-5) — under a live bridge rate
+ * they are not the same quantity as the gross, and only the net is labelled
+ * with a network here because only the net is a figure the user takes
+ * delivery of.
+ *
+ * # The rate
+ *
+ * `bridge_quote.bridge_rate` is the backend's own, shown at two places and
+ * never recomputed from the trio. Whether it is the rate this transfer
+ * SETTLED at or only the one it was created under is the difference between
+ * `locked_at` being set and not, and the row says which — a user comparing an
+ * indicative quote against what arrived deserves to know it was indicative.
  */
-function SettlementAmounts({ transfer }: { transfer: TransferViewDto }) {
+function SettlementAmounts({
+  transfer,
+  sourceNetwork,
+  destinationNetwork,
+}: {
+  transfer: TransferViewDto;
+  sourceNetwork: string;
+  destinationNetwork: string;
+}) {
+  // Absent and null mean the same thing here — a request with no quote, i.e.
+  // one created before schema v37 — and neither becomes an assumed 1.0.
+  const quote = transfer.bridge_quote ?? null;
+  const rateSentence =
+    quote === null
+      ? null
+      : formatBridgeRateSentence(
+          quote.bridge_rate,
+          sourceNetwork,
+          destinationNetwork,
+          CANONICAL_SYMBOL,
+        );
+
   return (
     <>
       <div>
@@ -282,8 +325,24 @@ function SettlementAmounts({ transfer }: { transfer: TransferViewDto }) {
             decimals={GOLDCOIN_DECIMALS}
             symbol={CANONICAL_SYMBOL}
           />
+          {/* The network, on the one figure the user takes delivery of.
+              Both sides of every route are GLC, so "28,227.00 GLC" alone
+              never said where it lands. */}
+          <span className="text-ink-500 font-normal"> on {destinationNetwork}</span>
         </dd>
       </div>
+      {rateSentence !== null && (
+        <div className="col-span-3">
+          <dt className="text-body-sm text-ink-500">
+            {/* `locked_at` is the whole distinction: an unlocked quote is
+                what the deposit WOULD settle at, re-struck when it is
+                first seen in a block. Saying "Bridge rate" flat would
+                present an indicative figure as the settled one. */}
+            {quote?.locked_at ? "Bridge rate (settled at)" : "Bridge rate (indicative)"}
+          </dt>
+          <dd className="text-ink-600 tabular">{rateSentence}</dd>
+        </div>
+      )}
     </>
   );
 }

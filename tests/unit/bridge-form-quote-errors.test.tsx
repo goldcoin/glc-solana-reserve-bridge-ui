@@ -200,7 +200,10 @@ describe("quote success", () => {
     await waitForRouteVerdict();
 
     await user.type(amountField(), "1000");
-    expect(await screen.findByText(/970\.00 GLC \(Solana\)/)).toBeVisible();
+    // "on Solana", not the backend's parenthesised "GLC (Solana)": the
+    // network is the fact a user must not misread, so it is stated rather
+    // than bracketed.
+    expect(await screen.findByText(/970\.00 GLC on Solana/)).toBeVisible();
     expect(estimate()).toHaveTextContent("970.00");
   });
 });

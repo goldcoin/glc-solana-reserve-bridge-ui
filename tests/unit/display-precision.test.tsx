@@ -203,6 +203,22 @@ describe("Bridge quote summary", () => {
     fee_display_amount: "2886.54174897",
     net_amount: "9333151655030",
     net_display_amount: "93331.51655030",
+    // A live Phase 2B rate, not the Phase 2A fixed 1.0 — the summary must
+    // read correctly when the two rails are far from parity, which is the
+    // case the fixed rate never exercised.
+    bridge_quote: {
+      bridge_rate: "3.430000000000",
+      source_price_e12: "155836000",
+      destination_price_e12: "45416000",
+      gross_in_amount: REPORTED_ATOMIC,
+      gross_out_amount: "9621805829927559",
+      fee_bps: 300,
+      bridge_fee_amount: "288654174897",
+      net_out_amount: "9333151655030",
+      dust_amount: "0",
+      quoted_at: 1_757_900_000,
+      quote_expires_at: 1_757_900_060,
+    },
     source_decimals: 8,
     destination_decimals: 6,
     source_asset: "GLC (Goldcoin)",
@@ -247,6 +263,45 @@ describe("Bridge quote summary", () => {
   it("shows a figure it cannot parse exactly as the backend sent it", () => {
     renderSummary({ ...quote, fee_display_amount: "1.0e2" });
     expect(screen.getByText(/1\.0e2/)).toBeInTheDocument();
+  });
+
+  it("states the backend's bridge rate at two places, and which way it points", () => {
+    renderSummary(quote);
+
+    expect(screen.getByText("Bridge rate")).toBeInTheDocument();
+    expect(
+      screen.getByText("1 GLC on Goldcoin = 3.43 GLC on Solana"),
+    ).toBeInTheDocument();
+    // Twelve places is an audit figure; it never reaches the page.
+    expect(screen.queryByText(/3\.430000000000/)).not.toBeInTheDocument();
+  });
+
+  it("does not label the bridge fee with the SOURCE network", () => {
+    renderSummary(quote);
+
+    // The fee is `fee_out` — the DESTINATION asset (decision J-5). Calling
+    // it "GLC (Goldcoin)" named an amount that exists on neither chain once
+    // the rate left 1.0.
+    expect(screen.queryByText(/2,886\.54 GLC \(Goldcoin\)/)).not.toBeInTheDocument();
+    expect(screen.getByText(/^3% · 2,886\.54 GLC$/)).toBeInTheDocument();
+  });
+
+  it("says what arrives and on which network", () => {
+    renderSummary(quote);
+    expect(screen.getByText("You receive")).toBeInTheDocument();
+    expect(screen.getByText("93,331.52 GLC on Solana")).toBeInTheDocument();
+  });
+
+  it("shows no rate at all when the backend sent no quote", () => {
+    const { bridge_quote: _omitted, ...withoutQuote } = quote;
+    renderSummary(withoutQuote);
+
+    // A pre-v37 daemon. Falling back to "1.00" would state a rate nobody
+    // struck; the row is simply absent.
+    expect(screen.queryByText("Bridge rate")).not.toBeInTheDocument();
+    expect(screen.queryByText(/1 GLC on Goldcoin/)).not.toBeInTheDocument();
+    // The figures that do not depend on the quote still render.
+    expect(screen.getByText("93,331.52 GLC on Solana")).toBeInTheDocument();
   });
 });
 
