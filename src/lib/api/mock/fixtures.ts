@@ -11,6 +11,7 @@ import type { ChainsViewDto } from "../schemas/chains";
 import type { Route } from "../schemas/common";
 import type { ExplorerEventDto } from "../schemas/explorer";
 import type { ReserveHistoryEntryDto } from "../schemas/reserves";
+import type { BridgeQuoteViewDto } from "../schemas/quote";
 import type {
   ManualRefundViewDto,
   TransferViewDto,
@@ -752,6 +753,48 @@ function manualRefundFixture(gross: bigint, at: number): ManualRefundViewDto {
   };
 }
 
+/**
+ * A bridge-rate price of exactly 1.0 in the backend's `e12` fixed-point
+ * (`bridge_rate::PRICE_SCALE`), and the documented default quote lifetime.
+ */
+const PRICE_SCALE_E12 = "1000000000000";
+const QUOTE_LIFETIME_SECS = 60;
+
+/**
+ * The bridge quote a `fixed_unit` deployment persists on a request
+ * (glc-solana-reserve-bridge schema v37, `docs/38-elastic-bridge-rate.md`).
+ *
+ * Both rails at `PRICE_SCALE`, so the rate is exactly 1.0 and `gross_out ==
+ * gross_in` — the fixture never invents a live rate it has no feeds for. What
+ * it does supply is the SHAPE, so every surface that renders a rate is
+ * exercised in mock mode instead of silently taking the legacy branch.
+ *
+ * `locked_at` follows the real lock rule: a quote is the SETTLEMENT quote
+ * once the deposit has been observed, and indicative before that.
+ */
+function unitRateQuoteFixture(
+  gross: bigint,
+  fee: bigint,
+  feeBps: number,
+  quotedAt: number,
+  locked: boolean,
+): BridgeQuoteViewDto {
+  return {
+    bridge_rate: "1.000000000000",
+    source_price_e12: PRICE_SCALE_E12,
+    destination_price_e12: PRICE_SCALE_E12,
+    gross_in_amount: gross.toString(),
+    gross_out_amount: gross.toString(),
+    fee_bps: feeBps,
+    bridge_fee_amount: fee.toString(),
+    net_out_amount: (gross - fee).toString(),
+    dust_amount: "0",
+    quoted_at: quotedAt,
+    quote_expires_at: quotedAt + QUOTE_LIFETIME_SECS,
+    ...(locked ? { locked_at: quotedAt } : {}),
+  };
+}
+
 export function transfersFixture(): TransferViewDto[] {
   const base = NOW_UNIX();
   return SAMPLE_STATES.map((state, index) => {
@@ -787,6 +830,15 @@ export function transfersFixture(): TransferViewDto[] {
           ? manualRefundFixture(gross, base - (SAMPLE_STATES.length - index) * 900 + 600)
           : null,
       disposition: state === "Closed" ? "refunded_out_of_band" : null,
+      bridge_quote: unitRateQuoteFixture(
+        gross,
+        fee,
+        BRIDGE_FEE_BPS,
+        base - (SAMPLE_STATES.length - index) * 900,
+        // Locked from the first deposit observation, which is exactly when
+        // a source txid exists.
+        state !== "AwaitingDeposit",
+      ),
     };
   });
 }
@@ -929,13 +981,14 @@ const ROBINHOOD_SOURCE_TX_HASH = `0x${"d".repeat(64)}`;
 
 export function robinhoodTransfersFixture(): TransferViewDto[] {
   const base = NOW_UNIX();
-  const amounts = (gross: bigint) => {
+  const amounts = (gross: bigint, locked = true) => {
     const fee = (gross * BigInt(BRIDGE_FEE_BPS)) / 10_000n;
     return {
       gross_amount_atomic: gross.toString(),
       fee_bps: BRIDGE_FEE_BPS,
       fee_amount_atomic: fee.toString(),
       net_amount_atomic: (gross - fee).toString(),
+      bridge_quote: unitRateQuoteFixture(gross, fee, BRIDGE_FEE_BPS, base, locked),
     };
   };
 
@@ -991,7 +1044,8 @@ export function robinhoodTransfersFixture(): TransferViewDto[] {
       id: 2003,
       direction: "GlcToRhn",
       state: "AwaitingDeposit",
-      ...amounts(300_00000000n),
+      // Indicative until the deposit is first seen in a block.
+      ...amounts(300_00000000n, false),
       created_at: base - 900,
       source_txid: null,
       source_confirmations: 0,

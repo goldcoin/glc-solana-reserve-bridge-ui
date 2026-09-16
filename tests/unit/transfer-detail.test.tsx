@@ -689,6 +689,99 @@ describe("TransferDetail — existing states are unchanged by the manual-refund 
     expect(fact("You receive")).toContain("47,000.00");
     expect(screen.queryByText(/manually refunded/i)).not.toBeInTheDocument();
   });
+});
+
+/**
+ * The bridge rate on a transfer.
+ *
+ * `bridge_quote` is the backend's own (glc-solana-reserve-bridge schema v37,
+ * `docs/38-elastic-bridge-rate.md`). Two things must survive here: the page
+ * never derives a rate from the gross/net trio, and it never presents an
+ * INDICATIVE quote as the rate the transfer settled at — `locked_at` is the
+ * whole difference, and a user reading "settled at" about a figure that was
+ * only ever a preview has been told something untrue.
+ */
+describe("TransferDetail — the bridge rate", () => {
+  const LIVE_QUOTE = {
+    bridge_rate: "3.431197993000",
+    source_price_e12: "155836000",
+    destination_price_e12: "45416000",
+    gross_in_amount: "5000000000000",
+    gross_out_amount: "17155989965000",
+    fee_bps: 600,
+    bridge_fee_amount: "1029359397900",
+    net_out_amount: "16126630567100",
+    dust_amount: "0",
+    quoted_at: 1_757_900_000,
+    quote_expires_at: 1_757_900_060,
+  };
+
+  it("states the settled rate at two places, pointing source to destination", async () => {
+    getTransfer.mockResolvedValue(
+      transferWith({
+        id: 50,
+        state: "Settled",
+        direction: "GlcToSol",
+        bridge_quote: { ...LIVE_QUOTE, locked_at: 1_757_900_010 },
+      }),
+    );
+    renderWithQueryClient(<TransferDetail id={50} />);
+
+    expect(
+      await screen.findByText("1 GLC on Goldcoin = 3.43 GLC on Solana"),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Bridge rate (settled at)")).toBeInTheDocument();
+    // Twelve places is an audit figure and never reaches the page.
+    expect(screen.queryByText(/3\.431197993/)).not.toBeInTheDocument();
+  });
+
+  it("marks an unlocked quote as indicative rather than as what happened", async () => {
+    getTransfer.mockResolvedValue(
+      transferWith({
+        id: 51,
+        state: "AwaitingDeposit",
+        direction: "GlcToSol",
+        bridge_quote: LIVE_QUOTE,
+      }),
+    );
+    renderWithQueryClient(<TransferDetail id={51} />);
+
+    expect(await screen.findByText("Bridge rate (indicative)")).toBeInTheDocument();
+    expect(screen.queryByText("Bridge rate (settled at)")).not.toBeInTheDocument();
+  });
+
+  it("shows no rate for a pre-v37 request rather than assuming 1.0", async () => {
+    getTransfer.mockResolvedValue(
+      transferWith({
+        id: 52,
+        state: "Settled",
+        direction: "GlcToSol",
+        bridge_quote: null,
+      }),
+    );
+    renderWithQueryClient(<TransferDetail id={52} />);
+
+    expect(await screen.findAllByText("Settled")).not.toHaveLength(0);
+    expect(screen.queryByText(/Bridge rate/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/= 1\.00 GLC/)).not.toBeInTheDocument();
+  });
+
+  it("names the destination network on the figure the user takes delivery of", async () => {
+    getTransfer.mockResolvedValue(
+      transferWith({
+        id: 53,
+        state: "Settled",
+        direction: "GlcToSol",
+        net_amount_atomic: "4700000000000",
+      }),
+    );
+    renderWithQueryClient(<TransferDetail id={53} />);
+
+    // Both sides of every route are GLC; "47,000.00 GLC" alone never said
+    // which chain it lands on.
+    expect(await screen.findAllByText("Settled")).not.toHaveLength(0);
+    expect(fact("You receive")).toContain("47,000.00 GLC on Solana");
+  });
 
   it("still walks the automated refund lifecycle, which is a different thing", async () => {
     for (const [id, state, phrase] of [
