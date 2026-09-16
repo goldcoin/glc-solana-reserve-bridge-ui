@@ -2,7 +2,7 @@
 
 Official web interface for the **Goldcoin ↔ Solana Reserve Bridge**.
 
-This application provides the user-facing interface for transferring GLC between the native Goldcoin blockchain and the existing GLC asset on Solana through a **reserve-backed 1:1 bridge architecture**.
+This application provides the user-facing interface for transferring GLC between the native Goldcoin blockchain and the existing GLC asset on Solana through a **reserve-backed bridge architecture**.
 
 > **Important:** This bridge does not mint, burn, wrap, or create GLC. Transfers are fulfilled using existing GLC held in reserves on each network.
 
