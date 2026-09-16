@@ -844,7 +844,7 @@ export function BridgeForm() {
       <div className="mb-2">
         <h1 className="text-heading-2">Bridge GLC</h1>
         <p className="text-body-sm text-ink-500 mt-1">
-          Reserve-backed, 1:1. Nothing is minted, burned, or wrapped.
+          Reserve-backed. Nothing is minted, burned, or wrapped.
         </p>
       </div>
 
