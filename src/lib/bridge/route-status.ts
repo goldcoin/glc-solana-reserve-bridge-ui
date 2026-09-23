@@ -348,11 +348,11 @@ function robinhoodWindow(
  *
  * # The MAXIMUM is published per route, and is no longer reconstructed
  *
- * It used to be derived: a static chain-pair table (`perTransferCeiling`)
- * chose between the Solana program's `per_transfer_limit` and the custody
- * contract's `inbound`/`outboundMax`, and a Goldcoin-sourced route — which
- * has no source ceiling of its own — fell through to whichever ceiling
- * bounded its DESTINATION payout.
+ * It used to be derived: a static chain-pair table chose between the
+ * Solana program's `per_transfer_limit` and the custody contract's
+ * `inbound`/`outboundMax`, and a Goldcoin-sourced route — which has no
+ * source ceiling of its own — fell through to whichever ceiling bounded
+ * its DESTINATION payout.
  *
  * Every input to that was a real on-chain limit, and none of them was the
  * limit the backend admits a user's transfer against. A per-transfer
@@ -371,10 +371,9 @@ function robinhoodWindow(
  * `per_transfer_limit`, the destination chain, or any static chain-level
  * mapping.
  *
- * `perTransferCeiling` therefore no longer has a reader here. It stays in
- * `./route-limits` for the bridge form, which enforces a chain's own
- * on-chain ceiling at submit time — a different question from what this
- * page states the bridge will accept.
+ * That table has no reader anywhere any more — the bridge form reads the
+ * same published field through `routeSourceMaximum` — so it is gone
+ * rather than left standing as something to reach for again.
  *
  * # The MINIMUM is the same kind of figure
  *

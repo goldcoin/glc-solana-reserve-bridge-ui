@@ -258,14 +258,20 @@ describe("Solana source", () => {
     await solanaSource(user);
 
     await user.click(maxButton()!);
-    // Bounded by the per-transfer maximum from `/limits` (20,000 GLC),
-    // which is above this balance, so the balance is the answer.
+    // Bounded by this route's published maximum, which is above this
+    // balance, so the balance is the answer.
     expect(amountField()).toHaveValue("12450.32");
   });
 
   it("clamps MAX to the route's per-transfer limit when the balance exceeds it", async () => {
     // A MAX that filled in the whole balance would be rejected by the very
     // next validation step.
+    //
+    // The limit is `SolToGlc`'s own published one — 50,000 — and NOT the
+    // Solana program's 20,000 `per_transfer_limit`, which this form used
+    // to clamp to here. Two routes leave this chain carrying different
+    // limits, so a chain ceiling could never have been right for both.
+    const routeMax = Number(fixtures.ROUTE_MAX_TRANSFER_DISPLAY.SolToGlc);
     solana.balance = {
       isPending: false,
       isError: false,
@@ -278,7 +284,8 @@ describe("Solana source", () => {
     await user.click(maxButton()!);
     await waitFor(() => expect(amountField()).not.toHaveValue(""));
     const filled = (amountField() as HTMLInputElement).value;
-    expect(Number(filled.replace(/,/g, ""))).toBeLessThanOrEqual(20_000);
+    expect(Number(filled.replace(/,/g, ""))).toBeLessThanOrEqual(routeMax);
+    expect(Number(filled.replace(/,/g, ""))).toBeGreaterThan(20_000);
   });
 
   it("disables MAX on a zero balance", async () => {

@@ -191,11 +191,10 @@ export {
   routeForPair,
   routesTouchingChain,
   routeSourceMinimum,
+  routeSourceMaximum,
   sourceChainIds,
   type RouteResolution,
 } from "./route-resolution";
-
-export { perTransferCeiling, type PerTransferCeiling } from "./route-limits";
 
 export {
   payloadSelectsRobinhood,

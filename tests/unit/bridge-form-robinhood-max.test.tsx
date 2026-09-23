@@ -16,25 +16,29 @@ import { formatBaseUnits } from "@/lib/format/amount";
 /**
  * The per-transaction maximum on the two Robinhood routes.
  *
- * # The gap this file closes
+ * # What this file used to pin, and why it changed
  *
- * The form showed "Min … · Max …" on the Solana pairs and NOTHING on a
- * Robinhood one. The reason was sound as far as it went — `GET /limits`
- * reports the SOLANA program's `BridgeConfig`, and relabelling it for a
- * Robinhood route would publish a ceiling no chain enforces — but the
- * conclusion was wrong: `GET /robinhood/limits` does publish the real
- * ceiling, read live from the deployed `GlcRobinhoodBridge`. A user on a
- * Robinhood route was therefore given no maximum at all, and found the
- * real one by having a transaction revert.
+ * The form once showed no maximum at all on a Robinhood route, then
+ * showed the custody contract's `inboundMax`/`outboundMax`. That was an
+ * improvement on nothing, and still wrong: the contract's ceilings bound
+ * the CONTRACT's own leg, and a payout ceiling in particular is not a
+ * statement about what a user may deposit. Live, `GlcToRhn` was offered
+ * 2,000,000 — the contract's `outboundMax` — while the backend admitted
+ * 20,000.
+ *
+ * The backend publishes the source-side user limit per route now
+ * (`GET /chains`' `max_transfer_display`), so that is what the form shows
+ * and validates against, on every route.
  *
  * # What is pinned here
  *
- * That the maximum shown comes FROM that endpoint, that each route reads
- * its own direction's field, that it is formatted in the source token's
- * own decimals, and that an unread contract still shows nothing rather
- * than a number nobody confirmed. The 20,000 figure lives in the fixture
- * standing in for the backend — never in the component, and never in an
- * expectation that would survive the backend changing it.
+ * That the maximum comes from the ROUTE's own registry entry, that it is
+ * formatted in the source token's own decimals, that a drifting contract
+ * ceiling cannot move it, and that a route the registry publishes no
+ * maximum for shows none rather than a number nobody stated. Every figure
+ * lives in the fixture standing in for the backend — never in the
+ * component, and never in an expectation that would survive the backend
+ * changing it.
  */
 
 const getStatus = vi.fn();
@@ -208,12 +212,14 @@ beforeEach(() => {
   });
 });
 
-/** The whole-GLC maximum the mock backend publishes, per direction. */
-function publishedMax(direction: "inbound" | "outbound"): bigint {
-  const limits = fixtures.robinhoodLimitsFixture(() => new Date(), { open: true });
-  const raw =
-    direction === "inbound" ? limits.inbound_max_atomic : limits.outbound_max_atomic;
-  return BigInt(raw ?? "0") / 10n ** 18n;
+/**
+ * The whole-GLC maximum the mock backend publishes for one ROUTE, read
+ * off the same `/chains` field the form reads. Never the custody
+ * contract's ceilings, which bound a different thing.
+ */
+function publishedMax(route: "GlcToRhn" | "RhnToGlc"): bigint {
+  const [whole = "0"] = fixtures.ROUTE_MAX_TRANSFER_DISPLAY[route].split(".");
+  return BigInt(whole);
 }
 
 /** "20,000" — grouped exactly as the form renders it. */
@@ -241,29 +247,30 @@ function publishedMinimum(): string {
 }
 
 describe("GlcToRhn — Goldcoin → Robinhood Chain", () => {
-  it("shows the contract's outbound per-transfer maximum", async () => {
+  it("shows the maximum published for this route", async () => {
     const user = userEvent.setup();
     renderWithQueryClient(<BridgeForm />);
     await waitForRouteVerdict();
 
     await selectNetwork(user, "Destination network", /Robinhood Chain/);
 
-    const expected = `Max ${grouped(publishedMax("outbound"))} GLC`;
+    const expected = `Max ${grouped(publishedMax("GlcToRhn"))} GLC`;
     await waitFor(() => expect(boundsLine()).toContain(expected));
   });
 
-  it("takes the figure from GET /robinhood/limits, not GET /limits", async () => {
+  it("takes the figure from GET /chains, not from either chain's ceiling", async () => {
     const user = userEvent.setup();
     renderWithQueryClient(<BridgeForm />);
     await waitForRouteVerdict();
     await selectNetwork(user, "Destination network", /Robinhood Chain/);
 
-    await waitFor(() => expect(getRobinhoodLimits).toHaveBeenCalled());
-    // The Solana program's own ceiling is a different number in a
-    // different unit; it must not be what this route displays.
+    await waitFor(() => expect(boundsLine()).toContain("Max "));
+    // Neither chain ceiling is what this route displays: the Solana
+    // program's `per_transfer_limit` is a different number in a different
+    // unit, and the contract's outbound ceiling bounds the payout leg.
     const solana = fixtures.limitsFixture();
-    expect(getLimits).toHaveBeenCalled();
     expect(boundsLine()).not.toContain(solana.per_transfer_limit);
+    expect(boundsLine()).toContain(`Max ${grouped(publishedMax("GlcToRhn"))} GLC`);
   });
 
   it("states the POLICY minimum, not a figure derived from the contract", async () => {
@@ -291,14 +298,14 @@ describe("GlcToRhn — Goldcoin → Robinhood Chain", () => {
     await selectNetwork(user, "Destination network", /Robinhood Chain/);
     await waitFor(() => expect(boundsLine()).toContain("Max "));
 
-    const over = (publishedMax("outbound") + 1n).toString();
+    const over = (publishedMax("GlcToRhn") + 1n).toString();
     await user.type(screen.getByLabelText(/Amount in GLC/i), over);
 
     // The form states the refusal in more than one place (beside the
     // field and in the route summary), so this counts them rather than
     // demanding exactly one.
     const refusals = await screen.findAllByText(
-      new RegExp(`maximum transfer is ${grouped(publishedMax("outbound"))} GLC`),
+      new RegExp(`maximum transfer is ${grouped(publishedMax("GlcToRhn"))} GLC`),
     );
     expect(refusals.length).toBeGreaterThan(0);
   });
@@ -312,21 +319,21 @@ describe("GlcToRhn — Goldcoin → Robinhood Chain", () => {
 
     await user.type(
       screen.getByLabelText(/Amount in GLC/i),
-      publishedMax("outbound").toString(),
+      publishedMax("GlcToRhn").toString(),
     );
     expect(screen.queryAllByText(/maximum transfer is/)).toHaveLength(0);
   });
 });
 
 describe("RhnToGlc — Robinhood Chain → Goldcoin", () => {
-  it("shows the contract's inbound per-transfer maximum", async () => {
+  it("shows the maximum published for this route", async () => {
     const user = userEvent.setup();
     renderWithQueryClient(<BridgeForm />);
     await waitForRouteVerdict();
 
     await selectNetwork(user, "Source network", /Robinhood Chain/);
 
-    const expected = `Max ${grouped(publishedMax("inbound"))} GLC`;
+    const expected = `Max ${grouped(publishedMax("RhnToGlc"))} GLC`;
     await waitFor(() => expect(boundsLine()).toContain(expected));
   });
 
@@ -339,74 +346,90 @@ describe("RhnToGlc — Robinhood Chain → Goldcoin", () => {
     await selectNetwork(user, "Source network", /Robinhood Chain/);
 
     await waitFor(() => expect(boundsLine()).toContain("Max "));
-    expect(boundsLine()).toContain(`${grouped(publishedMax("inbound"))} GLC`);
+    expect(boundsLine()).toContain(`${grouped(publishedMax("RhnToGlc"))} GLC`);
     expect(boundsLine()).not.toMatch(/Max 0[.,]/);
   });
 });
 
-describe("each route reads its OWN direction's field", () => {
+describe("the custody contract's own ceilings cannot move it", () => {
   beforeEach(() => {
-    // A deployment whose two maxima have drifted apart. Preflight would
-    // report it as a mismatch, but if it ever reaches a browser the form
-    // must show each route the ceiling that actually bounds it rather
-    // than whichever field it read first.
+    /*
+     * The exact production shape this change exists for: a contract whose
+     * outbound ceiling is two million. Reading it for `GlcToRhn` is what
+     * offered a user a hundred times the limit the backend would admit,
+     * and both figures below must now be absent from the line.
+     */
     getRobinhoodLimits.mockResolvedValue({
       ...fixtures.robinhoodLimitsFixture(() => new Date(), { open: true }),
-      inbound_max_atomic: "20000000000000000000000",
-      outbound_max_atomic: "15000000000000000000000",
+      inbound_max_atomic: "1500000000000000000000000",
+      outbound_max_atomic: "2000000000000000000000000",
     });
   });
 
-  it("GlcToRhn shows outboundMax", async () => {
+  it("GlcToRhn shows its published limit, not the contract's outboundMax", async () => {
     const user = userEvent.setup();
     renderWithQueryClient(<BridgeForm />);
     await waitForRouteVerdict();
     await selectNetwork(user, "Destination network", /Robinhood Chain/);
 
-    await waitFor(() => expect(boundsLine()).toContain("Max 15,000 GLC"));
-    expect(boundsLine()).not.toContain("20,000");
+    await waitFor(() =>
+      expect(boundsLine()).toContain(`Max ${grouped(publishedMax("GlcToRhn"))} GLC`),
+    );
+    expect(boundsLine()).not.toContain("2,000,000");
   });
 
-  it("RhnToGlc shows inboundMax", async () => {
+  it("RhnToGlc shows its published limit, not the contract's inboundMax", async () => {
     const user = userEvent.setup();
     renderWithQueryClient(<BridgeForm />);
     await waitForRouteVerdict();
     await selectNetwork(user, "Source network", /Robinhood Chain/);
 
-    await waitFor(() => expect(boundsLine()).toContain("Max 20,000 GLC"));
-    expect(boundsLine()).not.toContain("15,000");
-  });
-});
-
-describe("an unread contract publishes nothing", () => {
-  it("shows no maximum when the live read did not complete", async () => {
-    getRobinhoodLimits.mockResolvedValue(
-      fixtures.robinhoodLimitsFixture(() => new Date(), { open: false }),
+    await waitFor(() =>
+      expect(boundsLine()).toContain(`Max ${grouped(publishedMax("RhnToGlc"))} GLC`),
     );
-    const user = userEvent.setup();
-    renderWithQueryClient(<BridgeForm />);
-    await waitForRouteVerdict();
-
-    await selectNetwork(user, "Destination network", /Robinhood Chain/);
-    await waitFor(() => expect(getRobinhoodLimits).toHaveBeenCalled());
-    // Not "Max 0 GLC", which would say the route takes nothing.
-    expect(boundsLine()).not.toContain("Max ");
-    // The MINIMUM still shows. It is a published policy floor, not a
-    // contract read, so an unreachable contract cannot make it unknown —
-    // and blanking it would hide a limit this bridge does enforce.
-    expect(boundsLine()).toContain(`Min ${publishedMinimum()}`);
+    expect(boundsLine()).not.toContain("1,500,000");
   });
 
-  it("shows no maximum when the endpoint itself is absent", async () => {
-    // A deployment predating `GET /robinhood/limits` answers 404.
+  it("keeps showing a maximum when the contract could not be read at all", async () => {
+    // It used to blank on an unreadable contract, because the contract
+    // WAS the source. The limit does not come from there any more, so an
+    // unreachable contract cannot hide a limit the bridge enforces —
+    // exactly the argument that already kept the minimum on screen.
     getRobinhoodLimits.mockRejectedValue(new Error("404"));
     const user = userEvent.setup();
     renderWithQueryClient(<BridgeForm />);
     await waitForRouteVerdict();
 
     await selectNetwork(user, "Destination network", /Robinhood Chain/);
-    await waitFor(() => expect(getRobinhoodLimits).toHaveBeenCalled());
+    await waitFor(() =>
+      expect(boundsLine()).toContain(`Max ${grouped(publishedMax("GlcToRhn"))} GLC`),
+    );
+    expect(boundsLine()).toContain(`Min ${publishedMinimum()}`);
+  });
+});
+
+describe("a route the registry states no maximum for", () => {
+  /** `/chains` from a backend predating `max_transfer_display`. */
+  function withoutMaxima() {
+    const base = fixtures.chainsFixture(() => new Date(), { robinhoodOpen: true });
+    return {
+      ...base,
+      routes: base.routes.map(({ max_transfer_display: _omit, ...rest }) => rest),
+    };
+  }
+
+  it("shows no maximum rather than falling back to a chain ceiling", async () => {
+    getChains.mockResolvedValue(withoutMaxima());
+    const user = userEvent.setup();
+    renderWithQueryClient(<BridgeForm />);
+    await waitForRouteVerdict();
+
+    await selectNetwork(user, "Destination network", /Robinhood Chain/);
+    await waitFor(() => expect(boundsLine()).toContain("Min "));
+    // Not "Max 0 GLC", which would say the route takes nothing — and not
+    // the contract's or the Solana program's ceiling standing in for it.
     expect(boundsLine()).not.toContain("Max ");
+    // The MINIMUM is unaffected: it comes from its own published field.
     expect(boundsLine()).toContain(`Min ${publishedMinimum()}`);
   });
 });

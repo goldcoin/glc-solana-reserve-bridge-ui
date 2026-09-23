@@ -27,14 +27,13 @@ import {
   largestCanonicalRobinhoodAmountAtMost,
   maximumBridgeableAmount,
   CANONICAL_TO_ROBINHOOD_SCALE,
-  perTransferCeiling,
   resolveRoute,
   robinhoodContractLeg,
   solanaDepositDestination,
   payloadSelectsRobinhood,
-  robinhoodPerTransferMaximum,
   routesTouchingChain,
   routeSourceMinimum,
+  routeSourceMaximum,
   robinhoodRollingRemaining,
   robinhoodPredepositVerdict,
   robinhoodRawToCanonicalExact,
@@ -199,24 +198,13 @@ export function BridgeForm() {
   const sourceIsRobinhood = sourceChainId === "robinhood";
 
   /**
-   * Which published ceiling bounds THIS pair — the one table, shared with
-   * /status, so the maximum this form enforces and the one that page prints
-   * are the same figure.
+   * The Robinhood custody contract's own limits response, for the one
+   * route this form is currently pointed at.
    *
-   * This used to be an inline `neither side is Robinhood` boolean. That
-   * answered correctly while Robinhood only ever paired with Goldcoin, and
-   * wrongly on the cross routes, where both chains publish a ceiling:
-   * `SolToRhn` is bounded by the Solana program on the way in, and the
-   * inline test called that "Robinhood-legged" and dropped the one bound
-   * that applies to the deposit. See `./route-limits` for which side wins
-   * and why no combined figure is shown.
-   */
-  const ceiling = perTransferCeiling(sourceChainId, destinationChainId);
-  const limitsGovernRoute = ceiling === "solana-program";
-
-  /**
-   * The Robinhood custody contract's own ceilings, for the one route this
-   * form is currently pointed at.
+   * Read for its ROLLING WINDOW alone. The contract's
+   * `inboundMax`/`outboundMax` are real bounds on the contract's own leg,
+   * but they are not the limit a user is admitted against and are no
+   * longer what this form shows or validates — see `routeSourceMaximum`.
    *
    * Gated exactly as the status page gates `useRobinhoodReserve`:
    * `isRouteEnabled`, not `isRouteEffectivelyAvailable`. A route an
@@ -254,21 +242,6 @@ export function BridgeForm() {
   const robinhoodLeg: RobinhoodContractLeg | null = robinhoodContractLeg(
     sourceChainId,
     destinationChainId,
-  );
-
-  /**
-   * This pair's per-transaction ceiling in the source token's own base
-   * units — `undefined` on a pair the contract does not bound, and while
-   * its limits have not been read.
-   */
-  const robinhoodMaximum = useMemo(
-    () =>
-      robinhoodPerTransferMaximum(
-        robinhoodLeg,
-        robinhoodLimits.data,
-        sourceToken.decimals,
-      ),
-    [robinhoodLeg, robinhoodLimits.data, sourceToken.decimals],
   );
 
   /**
@@ -313,6 +286,26 @@ export function BridgeForm() {
   );
 
   /**
+   * **The source-side maximum for this pair**, in the source token's own
+   * base units, published per route by the backend exactly as the minimum
+   * is — and keyed by the same two chain ids, for the same reason.
+   *
+   * It is the limit a user is ADMITTED against, which is what the chain
+   * ceilings this replaced were not. See `routeSourceMaximum` for what was
+   * derived before and why no chain-level figure could have been right.
+   */
+  const sourceMaximum = useMemo(
+    () =>
+      routeSourceMaximum(
+        chains.data,
+        sourceChainId,
+        destinationChainId,
+        sourceToken.decimals,
+      ),
+    [chains.data, sourceChainId, destinationChainId, sourceToken.decimals],
+  );
+
+  /**
    * What the custody contract's rolling 24-hour window has left for this
    * pair, in source units — read from the accumulator the contract
    * charges, never reconstructed here.
@@ -323,42 +316,46 @@ export function BridgeForm() {
     [robinhoodLeg, robinhoodLimits.data, sourceToken.decimals],
   );
 
-  const amountBounds = useMemo(() => {
-    // The MINIMUM is the same rule on every route and comes from one
-    // place — `GET /chains`' per-route `min_transfer_atomic` — so it sits
-    // outside the branch below. Only the MAXIMUM differs, because the two
-    // chains really do enforce different ceilings: the Solana program's
-    // `per_transfer_limit` where `perTransferCeiling` says that bounds the
-    // pair, `GlcRobinhoodBridge`'s `inboundMax`/`outboundMax` where it says
-    // the contract does.
-    if (!limitsGovernRoute) {
-      return {
-        decimals: sourceToken.decimals,
-        symbol: sourceToken.symbol,
-        minimum: sourceMinimum,
-        maximum: robinhoodMaximum,
-      };
-    }
-    if (!limits.data) return null;
-    return {
+  /*
+   * Both bounds, from the backend's own per-route figures.
+   *
+   * There is no branch left here, and that is the fix. The minimum always
+   * came from one place; the MAXIMUM used to be chosen per route between
+   * two chain ceilings — the Solana program's `per_transfer_limit` and
+   * `GlcRobinhoodBridge`'s `inboundMax`/`outboundMax` — with a
+   * Goldcoin-sourced route falling through to whichever bounded its
+   * DESTINATION payout. Every one of those is a real on-chain limit and
+   * none of them is the limit a user is admitted against, so the form
+   * showed and enforced 20,000 on `SolToGlc` and `SolToRhn` against a real
+   * 50,000, and the contract's 2,000,000 on `GlcToRhn` against a real
+   * 20,000.
+   *
+   * Both figures now come from this route's own `GET /chains` entry, in
+   * the source token's units. Either may be absent — a backend predating
+   * the field publishes neither — and absent means this form applies no
+   * bound of its own rather than inventing one; the backend still refuses
+   * an out-of-range transfer with its own sentence.
+   */
+  const amountBounds = useMemo(
+    () => ({
       decimals: sourceToken.decimals,
       symbol: sourceToken.symbol,
       minimum: sourceMinimum,
-      maximum: atomicRescaleFloor(
-        String(limits.data.per_transfer_limit),
-        SOLANA_GLC.decimals,
-        sourceToken.decimals,
-      ),
-    };
-  }, [limits.data, sourceToken, limitsGovernRoute, sourceMinimum, robinhoodMaximum]);
+      maximum: sourceMaximum,
+    }),
+    [sourceToken, sourceMinimum, sourceMaximum],
+  );
 
-  const amountValidation = amountBounds
-    ? validateAmount(amountInput, amountBounds)
-    : null;
+  // Always validated now: the bounds no longer depend on a second
+  // endpoint arriving, so there is no state in which this form has a
+  // route and no bounds object to check against. An absent individual
+  // bound is still absent — `validateAmount` simply applies no limit on
+  // that side.
+  const amountValidation = validateAmount(amountInput, amountBounds);
 
   const canonicalGrossAmount = useMemo(() => {
-    const raw = amountValidation?.raw;
-    if (raw === null || raw === undefined) return "0";
+    const raw = amountValidation.raw;
+    if (raw === null) return "0";
     // Robinhood is the one source whose precision EXCEEDS the canonical
     // unit's, so its conversion narrows and can fail. Never floored: the
     // contract rejects a non-canonical amount rather than rounding it,
@@ -366,12 +363,11 @@ export function BridgeForm() {
     // or claim GLC that was never deposited.
     if (sourceIsRobinhood) return robinhoodRawToCanonicalExact(raw) ?? "0";
     return sourceRawToCanonical(raw, sourceToken.decimals);
-  }, [amountValidation?.raw, sourceIsRobinhood, sourceToken.decimals]);
+  }, [amountValidation.raw, sourceIsRobinhood, sourceToken.decimals]);
 
   const amountIsCanonical =
     !sourceIsRobinhood ||
-    amountValidation?.raw === null ||
-    amountValidation?.raw === undefined ||
+    amountValidation.raw === null ||
     isCanonicalRobinhoodAmount(amountValidation.raw);
 
   /*
@@ -588,10 +584,9 @@ export function BridgeForm() {
    * The largest amount that could actually be bridged right now.
    *
    * Only bounds that govern THIS route are passed in. `amountBounds`
-   * carries a maximum solely for the Solana-governed pairs — `GET /limits`
-   * describes the Solana program's reserve — and `remainingMintRaw` is
-   * likewise `null` for a Robinhood-legged route, so neither is applied
-   * where it would be a ceiling that no chain enforces.
+   * carries this route's own published maximum, whichever pair it is, and
+   * `remainingMintRaw` is `null` for a Robinhood-legged route, so the
+   * rolling figure is never applied where no chain enforces it.
    *
    * The granularity is where the Robinhood custody contract's own rule
    * enters: it reverts any amount that is not an exact multiple of 10^10,
@@ -601,7 +596,7 @@ export function BridgeForm() {
     if (sourceBalance.kind !== "known") return null;
     return maximumBridgeableAmount({
       balanceRaw: sourceBalance.raw,
-      routeMaximumRaw: amountBounds?.maximum ?? null,
+      routeMaximumRaw: amountBounds.maximum ?? null,
       remainingCapacityRaw:
         remainingMintRaw === null
           ? null
@@ -876,7 +871,7 @@ export function BridgeForm() {
             // limits, the balance and a validation message cannot space
             // themselves differently from one another.
             <div className="flex flex-col gap-1">
-              {amountValidation && isReportableProblem(amountValidation.problem) && (
+              {isReportableProblem(amountValidation.problem) && (
                 <p className="text-body-sm text-danger-700">{amountValidation.message}</p>
               )}
               <SourceBalanceRow
@@ -894,13 +889,15 @@ export function BridgeForm() {
 
                   Both families now reach the same line by the same route:
                   a server-authoritative floor, ceiling and rolling
-                  remainder, each read from the chain that enforces it —
-                  the Solana program's `BridgeConfig` and rolling-volume
-                  PDA for the Solana pairs, `GlcRobinhoodBridge`'s
-                  `limits()` and its inbound/outbound accumulators for the
-                  Robinhood ones. Nothing on this line is computed from
-                  this UI's own view of activity. */}
-              {amountBounds && hasLimitsToShow(amountBounds, rollingRemaining) && (
+                  remainder. The floor and ceiling are the backend's own
+                  per-route figures from `GET /chains` — the limits a
+                  transfer is admitted against, not a chain ceiling picked
+                  per route — and the remainder is read from the
+                  accumulator that charges it: the Solana program's
+                  rolling-volume PDA, or `GlcRobinhoodBridge`'s
+                  inbound/outbound windows. Nothing on this line is
+                  computed from this UI's own view of activity. */}
+              {hasLimitsToShow(amountBounds, rollingRemaining) && (
                 <p className="text-body-sm text-ink-500">
                   {boundsSummary(amountBounds)}
                   {rollingRemaining !== null && (
@@ -1054,7 +1051,7 @@ export function BridgeForm() {
   );
 
   async function submit() {
-    if (!gate.can || !amountValidation?.raw || !sourceAdapter || !route) return;
+    if (!gate.can || !amountValidation.raw || !sourceAdapter || !route) return;
     setSubmitError(null);
     setSubmitting(true);
     try {
