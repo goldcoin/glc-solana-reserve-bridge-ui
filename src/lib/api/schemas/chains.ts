@@ -144,6 +144,54 @@ export const routeViewSchema = z.object({
    * claim the route has no floor at all.
    */
   min_transfer_atomic: nonNegativeAtomicAmountSchema.optional(),
+  /**
+   * **The authoritative source-side maximum for this route** — the figure
+   * to render as "Max per transfer", as a canonical decimal string
+   * (`"20000.00000000"`).
+   *
+   * # Per ROUTE, which is the whole point
+   *
+   * The bridge's per-transfer ceiling is not a property of a chain. Two
+   * routes leaving the same chain can carry different source limits —
+   * `SolToGlc` at 50,000 and `GlcToSol` at 20,000 — and no chain-level
+   * figure can express that.
+   *
+   * Before this field a client had to pick a published ceiling per route
+   * itself: the Solana program's `per_transfer_limit` for a Solana-sourced
+   * route, the custody contract's `inbound`/`outboundMax` for a Robinhood
+   * one, and for a Goldcoin-sourced route — which has no source ceiling at
+   * all — whatever bounded its DESTINATION payout. Each of those is a real
+   * on-chain limit, and none of them is the limit the backend admits a
+   * user's transfer against. That reconstruction put a Robinhood
+   * contract's 2,000,000 outbound ceiling on the `GlcToRhn` card while the
+   * backend was admitting 20,000, and showed `SolToGlc` and `SolToRhn` the
+   * same 20,000 when one of them is 50,000.
+   *
+   * So: render THIS route's value, and derive nothing. Not from the
+   * destination reserve's capacity, not from a settlement per-transfer
+   * limit, not from a custody contract's outbound maximum, not from the
+   * Solana program's `per_transfer_limit`, not from the destination chain,
+   * and not from any static chain-level mapping. The backend has already
+   * done that work per route.
+   *
+   * It is the SOURCE-side user limit, and it bounds the gross a user may
+   * submit. It is not the destination reserve's capacity, which is a
+   * different quantity that can legitimately be far larger and is reported
+   * in its own right.
+   *
+   * # Optional, so the two repos can deploy in either order
+   *
+   * A backend predating this field omits it, which must read as "not
+   * published" and leave the maximum absent — never as `0`, and never as a
+   * chain ceiling reconstructed locally, which is exactly what this field
+   * replaces.
+   */
+  max_transfer_display: z
+    .string()
+    .regex(/^\d+(\.\d+)?$/, {
+      error: 'must be a non-negative decimal string, e.g. "20000.00000000"',
+    })
+    .optional(),
 });
 
 export type RouteViewDto = z.infer<typeof routeViewSchema>;

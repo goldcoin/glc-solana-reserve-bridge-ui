@@ -59,7 +59,6 @@ function robinhoodReserve(): RobinhoodReserveDto {
 
 function input(overrides: Partial<RouteStatusInput> = {}): RouteStatusInput {
   return {
-    robinhoodLimits: fixtures.robinhoodLimitsFixture(now, { open: true }),
     chains: fixtures.chainsFixture(now, { robinhoodOpen: true }),
     status: {
       ...fixtures.statusFixture(now),
@@ -378,21 +377,79 @@ describe("the route list itself", () => {
 });
 
 describe("published limits and fees", () => {
-  it("takes the MAXIMUM from whichever chain enforces that route", () => {
-    for (const route of ["GlcToSol", "SolToGlc"] as const) {
-      expect(statusOf(route).maximum?.source).toBe("GET /limits · per_transfer_limit");
-      // Mint-atomic, the unit the on-chain check compares against.
-      expect(statusOf(route).maximum?.decimals).toBe(6);
+  /*
+   * The MAXIMUM is the backend's own per-route source limit, and nothing
+   * else. It used to be reconstructed from whichever chain ceiling was
+   * nearest — the Solana program's `per_transfer_limit` for a
+   * Solana-sourced route, the custody contract's `inbound`/`outboundMax`
+   * for a Robinhood one, the DESTINATION's ceiling for a Goldcoin-sourced
+   * one — and in production that printed 2,000,000 on `GlcToRhn` against a
+   * real 20,000, and 20,000 on `SolToGlc` and `SolToRhn` against a real
+   * 50,000.
+   */
+  const EXPECTED_MAXIMUM_ATOMIC: Readonly<Record<SettlementRoute, string>> = {
+    GlcToSol: "2000000000000", // 20,000
+    SolToGlc: "5000000000000", // 50,000
+    GlcToRhn: "2000000000000", // 20,000
+    RhnToGlc: "5000000000000", // 50,000
+    SolToRhn: "5000000000000", // 50,000
+    RhnToSol: "5000000000000", // 50,000
+  };
+
+  it("takes each route's MAXIMUM from that route's own /chains entry", () => {
+    for (const route of Object.keys(EXPECTED_MAXIMUM_ATOMIC) as SettlementRoute[]) {
+      const card = statusOf(route);
+      expect(card.maximum?.source).toBe("GET /chains · max_transfer_display");
+      // Canonical 8dp, the unit the published figure is denominated in —
+      // never the Solana mint's 6 or the custody contract's 18, which is
+      // what reading a chain ceiling used to produce.
+      expect(card.maximum?.decimals).toBe(8);
+      expect(card.maximum?.atomic).toBe(EXPECTED_MAXIMUM_ATOMIC[route]);
     }
-    // The Robinhood routes read the CONTRACT that reverts an oversized
-    // transfer, each its own direction's field, in its native 18 decimals.
-    expect(statusOf("GlcToRhn").maximum?.source).toBe(
-      "GET /robinhood/limits · outbound_max_atomic",
+  });
+
+  it("gives two routes leaving the SAME chain their own different limits", () => {
+    // The property no chain-level ceiling can express, and the exact pair
+    // that was wrong in production.
+    expect(statusOf("SolToGlc").maximum?.atomic).not.toBe(
+      statusOf("GlcToSol").maximum?.atomic,
     );
-    expect(statusOf("RhnToGlc").maximum?.source).toBe(
-      "GET /robinhood/limits · inbound_max_atomic",
+    expect(statusOf("SolToRhn").maximum?.atomic).toBe(
+      statusOf("SolToGlc").maximum?.atomic,
     );
-    expect(statusOf("GlcToRhn").maximum?.decimals).toBe(18);
+    expect(statusOf("GlcToRhn").maximum?.atomic).not.toBe(
+      statusOf("RhnToGlc").maximum?.atomic,
+    );
+  });
+
+  it("tracks the registry when it republishes a route's limit", () => {
+    const base = fixtures.chainsFixture(now, { robinhoodOpen: true });
+    const raised = {
+      ...base,
+      routes: base.routes.map((route) =>
+        route.id === "GlcToRhn"
+          ? { ...route, max_transfer_display: "12345.50000000" }
+          : route,
+      ),
+    };
+    expect(statusOf("GlcToRhn", { chains: raised }).maximum?.atomic).toBe(
+      "1234550000000",
+    );
+    // And only that route moved.
+    expect(statusOf("RhnToGlc", { chains: raised }).maximum?.atomic).toBe(
+      EXPECTED_MAXIMUM_ATOMIC.RhnToGlc,
+    );
+  });
+
+  it("does not move when the Solana program's per-transfer limit changes", () => {
+    // `GET /limits` is the on-chain `BridgeConfig`, not the limit a user is
+    // admitted against. It bounded three cards before this change.
+    const limits = { ...fixtures.limitsFixture(), per_transfer_limit: "999000000" };
+    for (const route of Object.keys(EXPECTED_MAXIMUM_ATOMIC) as SettlementRoute[]) {
+      expect(statusOf(route, { limits }).maximum?.atomic).toBe(
+        EXPECTED_MAXIMUM_ATOMIC[route],
+      );
+    }
   });
 
   it("gives every route the SAME published minimum, from GET /chains", () => {
@@ -416,15 +473,36 @@ describe("published limits and fees", () => {
     );
   });
 
-  it("publishes no Robinhood maximum when the contract could not be read", () => {
-    for (const route of ["GlcToRhn", "RhnToGlc"] as const) {
-      const card = executableRouteStatuses(input({ robinhoodLimits: undefined })).find(
-        (c) => c.route === route,
-      );
-      expect(card?.maximum).toBeNull();
-      // The published floor is unaffected: it never came from the contract.
-      expect(card?.minimum?.atomic).toBe(fixtures.SOURCE_MINIMUM_ATOMIC);
+  it("publishes no maximum for a route the registry states none for", () => {
+    // A backend predating `max_transfer_display` omits it. Absent must read
+    // as absent — never as zero, and above all never as a chain ceiling
+    // reconstructed locally, which is the behaviour this replaced.
+    const base = fixtures.chainsFixture(now, { robinhoodOpen: true });
+    const silent = {
+      ...base,
+      routes: base.routes.map(({ max_transfer_display: _omit, ...rest }) => rest),
+    };
+    for (const card of executableRouteStatuses(input({ chains: silent }))) {
+      expect(card.maximum).toBeNull();
+      // The published floor is unaffected: it comes from its own field.
+      expect(card.minimum?.atomic).toBe(fixtures.SOURCE_MINIMUM_ATOMIC);
     }
+  });
+
+  it("publishes no maximum for a figure it cannot parse, rather than a repaired one", () => {
+    const base = fixtures.chainsFixture(now, { robinhoodOpen: true });
+    const malformed = {
+      ...base,
+      routes: base.routes.map((route) =>
+        route.id === "SolToGlc"
+          ? { ...route, max_transfer_display: "not-a-number" }
+          : route,
+      ),
+    };
+    expect(statusOf("SolToGlc", { chains: malformed }).maximum).toBeNull();
+    expect(statusOf("GlcToSol", { chains: malformed }).maximum?.atomic).toBe(
+      EXPECTED_MAXIMUM_ATOMIC.GlcToSol,
+    );
   });
 
   it("prices each route from GET /stats' own per-route table", () => {

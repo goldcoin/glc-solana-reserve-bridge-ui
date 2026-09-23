@@ -254,6 +254,27 @@ const ROBINHOOD_LEGGED: readonly {
   { id: "RhnToSol", source: "robinhood", destination: "solana" },
 ];
 
+/**
+ * The source-side per-transfer maximum the backend publishes per route,
+ * as the canonical decimal string `max_transfer_display` carries.
+ *
+ * These are the real production figures, and they are deliberately NOT all
+ * equal: two routes leaving the same chain carry different limits, which is
+ * precisely what no chain-level ceiling can express. A fixture that gave
+ * every route the same number is how a card reading the Solana program's
+ * `per_transfer_limit` for `SolToGlc`, and the custody contract's
+ * `outboundMax` for `GlcToRhn`, went on passing its tests while both were
+ * wrong in production.
+ */
+export const ROUTE_MAX_TRANSFER_DISPLAY: Readonly<Record<Route, string>> = {
+  GlcToSol: "20000.00000000",
+  SolToGlc: "50000.00000000",
+  GlcToRhn: "20000.00000000",
+  RhnToGlc: "50000.00000000",
+  SolToRhn: "50000.00000000",
+  RhnToSol: "50000.00000000",
+};
+
 export function chainsFixture(
   now: () => Date,
   options: {
@@ -290,6 +311,7 @@ export function chainsFixture(
     disabled_reason: null,
     implemented: true,
     min_transfer_atomic: SOURCE_MINIMUM_ATOMIC,
+    max_transfer_display: ROUTE_MAX_TRANSFER_DISPLAY[id],
     available: true,
     unavailable_reason: null,
   });
@@ -304,6 +326,7 @@ export function chainsFixture(
     disabled_reason: robinhoodOpen ? null : ROUTE_UNAVAILABLE_MESSAGE,
     implemented: true,
     min_transfer_atomic: SOURCE_MINIMUM_ATOMIC,
+    max_transfer_display: ROUTE_MAX_TRANSFER_DISPLAY[entry.id],
     available: robinhoodAvailable,
     unavailable_reason: robinhoodAvailable
       ? null
