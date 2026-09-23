@@ -6,13 +6,9 @@ import type {
   ReserveAvailabilityDto,
   TransferLimitsDto,
 } from "@/lib/api/schemas/status";
-import type {
-  RobinhoodLimitsDto,
-  RobinhoodReserveDto,
-} from "@/lib/api/schemas/robinhood";
-import { isRobinhoodAvailable } from "@/lib/api/schemas/robinhood";
+import type { RobinhoodReserveDto } from "@/lib/api/schemas/robinhood";
 import { GOLDCOIN_DECIMALS } from "@/lib/config/env";
-import { ROBINHOOD_DECIMALS } from "./robinhood-amount";
+import { parseToBaseUnits } from "@/lib/format/amount";
 import type { BridgeStatsDto } from "@/lib/api/schemas/stats";
 import { directions } from "./direction";
 import { GOLDCOIN_GLC, SOLANA_GLC } from "./chain-registry";
@@ -28,8 +24,6 @@ import {
   type RobinhoodRoute,
   type RobinhoodRouteGateState,
 } from "./robinhood-route-state";
-import { robinhoodContractLeg } from "./robinhood-limits";
-import { perTransferCeiling } from "./route-limits";
 import { routeAvailability, type RouteAvailability } from "./route-availability";
 import { executableRoutes } from "./route-families";
 
@@ -179,16 +173,21 @@ export interface RouteStatusInput {
   readonly limits: TransferLimitsDto | undefined;
   /** `GET /stats` — carried for `route_fees`, the per-route price table. */
   readonly stats: BridgeStatsDto | undefined;
-  /**
-   * `GET /robinhood/limits` — the custody contract's own per-transfer
-   * ceilings, for the routes whose deposit it bounds.
-   *
-   * `undefined` on a deployment without the endpoint, or while the read
-   * is in flight, which leaves those maxima absent rather than filled in
-   * from the Solana program's figures.
-   */
-  readonly robinhoodLimits: RobinhoodLimitsDto | undefined;
 }
+
+/*
+ * `GET /robinhood/limits` is deliberately NOT an input here any more.
+ *
+ * It was carried for one reader: the per-transfer maximum, which used to
+ * be reconstructed from the custody contract's `inbound`/`outboundMax`.
+ * The backend now publishes that limit per route on `GET /chains`, so the
+ * contract's ceilings have no consumer on this page — and removing the
+ * field is what makes "a card can never show a chain's ceiling in place of
+ * its route's limit" a property of the types rather than a rule someone
+ * has to remember. The bridge form still reads that endpoint, because it
+ * enforces the contract's own bound at submit time, which is a different
+ * question from what this page reports.
+ */
 
 /** The two routes whose figures `GET /status` and `GET /reserve` describe. */
 const SOLANA_GOVERNED: Record<SolanaGovernedRoute, true> = {
@@ -344,25 +343,39 @@ function robinhoodWindow(
 }
 
 /**
- * The per-transfer bounds for one route.
+ * The per-transfer bounds for one route, each read off THAT route's own
+ * `GET /chains` entry.
  *
- * # The MAXIMUM is the ceiling the SOURCE chain enforces
+ * # The MAXIMUM is published per route, and is no longer reconstructed
  *
- * `TransferLimits` carries the on-chain `BridgeConfig` values raw, and
- * those are the SOLANA program's — the on-chain checks compare them against
- * mint-atomic (6-decimal) amounts (`limits.rs::enforce_transfer_amount`).
- * The Robinhood routes take theirs from the contract that actually reverts
- * above it, `GET /robinhood/limits`, and never from the Solana pair's
- * numbers.
+ * It used to be derived: a static chain-pair table chose between the
+ * Solana program's `per_transfer_limit` and the custody contract's
+ * `inbound`/`outboundMax`, and a Goldcoin-sourced route — which has no
+ * source ceiling of its own — fell through to whichever ceiling bounded
+ * its DESTINATION payout.
  *
- * Which of the two applies to a given route is not decided here: it is
- * `perTransferCeiling` in `./route-limits`, the same table the bridge form
- * reads, so the ceiling this page PRINTS and the ceiling the form ENFORCES
- * cannot disagree. For the two cross routes, where both chains publish a
- * ceiling in different units, that table picks the source-side one and
- * documents why no combined figure is shown.
+ * Every input to that was a real on-chain limit, and none of them was the
+ * limit the backend admits a user's transfer against. A per-transfer
+ * maximum is not a property of a chain: `SolToGlc` and `SolToRhn` leave
+ * the same chain with different source limits, so no chain-level figure
+ * can state both. In production it printed the contract's 2,000,000
+ * outbound ceiling on `GlcToRhn` against a real limit of 20,000, and the
+ * Solana program's 20,000 on `SolToGlc` and `SolToRhn` against a real
+ * 50,000. The fixtures happened to carry 20,000 everywhere, so the tests
+ * agreed with it.
  *
- * # The MINIMUM is not from either
+ * The backend now publishes the source-side user limit per route
+ * (`max_transfer_display`), so this reads that route's value and derives
+ * nothing — not from the destination reserve's capacity, a settlement
+ * per-transfer limit, a Robinhood outbound maximum, the Solana program's
+ * `per_transfer_limit`, the destination chain, or any static chain-level
+ * mapping.
+ *
+ * That table has no reader anywhere any more — the bridge form reads the
+ * same published field through `routeSourceMaximum` — so it is gone
+ * rather than left standing as something to reach for again.
+ *
+ * # The MINIMUM is the same kind of figure
  *
  * It is the one published policy floor, identical on every route
  * (`GET /chains`' `min_transfer_atomic`). That is why the Solana routes
@@ -370,6 +383,12 @@ function robinhoodWindow(
  * check, not the floor a user is held to, and printing it beside a
  * per-transfer maximum invited exactly the reading that produced "Min 99
  * GLC" in the bridge form.
+ *
+ * # Absent stays absent
+ *
+ * A backend that publishes no maximum for a route leaves the row out, the
+ * same as every other figure on this card. It is never zero, and never
+ * another route's number.
  */
 const LIMITS: Record<
   SettlementRoute,
@@ -387,38 +406,20 @@ const LIMITS: Record<
 };
 
 /**
- * One route's floor and ceiling, each from the endpoint that owns it.
+ * One route's floor and ceiling, both from the registry entry for THAT
+ * route — the only place either figure is published per route.
  *
- * The ceiling is looked up through the shared pair→ceiling table rather
- * than restated per route, so the six entries above are six identical
- * lookups by design: there is no route-specific arithmetic left to get
- * wrong, and a seventh route is a compile error in that table instead of a
- * silently missing bound here.
+ * The six entries above are six identical lookups by design: there is no
+ * route-specific arithmetic left to get wrong, and no route can be handed
+ * a figure that was published about a different one.
  */
 function bounds(
   route: SettlementRoute,
   input: RouteStatusInput,
 ): { minimum: RouteFigure | null; maximum: RouteFigure | null } {
-  const descriptor = directions[route];
-  const ceiling = perTransferCeiling(descriptor.from.chain.id, descriptor.to.chain.id);
   return {
     minimum: policyMinimum(input),
-    maximum:
-      ceiling === "solana-program"
-        ? solanaMaximum(input.limits)
-        : ceiling === "robinhood-contract"
-          ? robinhoodMaximum(
-              input,
-              // The contract bounds LEGS: a route deposited on Robinhood is
-              // capped by `inboundMax`, one paid out onto it by
-              // `outboundMax`. Read off the same leg derivation the form
-              // uses, never from the route name.
-              robinhoodContractLeg(descriptor.from.chain.id, descriptor.to.chain.id) ===
-                "deposit"
-                ? "inbound_max_atomic"
-                : "outbound_max_atomic",
-            )
-          : null,
+    maximum: publishedMaximum(route, input),
   };
 }
 
@@ -441,33 +442,35 @@ function policyMinimum(input: RouteStatusInput): RouteFigure | null {
   };
 }
 
-function solanaMaximum(limits: TransferLimitsDto | undefined): RouteFigure | null {
-  if (!limits) return null;
-  return {
-    atomic: limits.per_transfer_limit,
-    decimals: SOLANA_GLC.decimals,
-    source: "GET /limits · per_transfer_limit",
-  };
-}
-
 /**
- * A Robinhood route's per-transfer ceiling, from the contract that
- * reverts anything above it. 18 decimals, reported in the contract's own
- * unit rather than narrowed — the card formats each figure with the
- * decimals it carries.
+ * The source-side maximum the backend publishes for THIS route, in
+ * canonical 8dp.
+ *
+ * `max_transfer_display` arrives as a canonical decimal string
+ * (`"20000.00000000"`), so the only step taken here is the unit
+ * conversion every figure on this card goes through before rendering —
+ * exact integer arithmetic on the published digits, via the same
+ * `parseToBaseUnits` the rest of the app uses. Nothing is scaled,
+ * grossed up, compared against another endpoint, or reconciled with a
+ * chain ceiling: a published figure this UI cannot parse is reported
+ * absent rather than repaired, exactly as an absent one is.
+ *
+ * The route is matched by id, never by position and never by a
+ * neighbouring entry — a registry that omits this route publishes no
+ * maximum for it.
  */
-function robinhoodMaximum(
+function publishedMaximum(
+  route: SettlementRoute,
   input: RouteStatusInput,
-  field: "inbound_max_atomic" | "outbound_max_atomic",
 ): RouteFigure | null {
-  const limits = input.robinhoodLimits;
-  if (!limits || !isRobinhoodAvailable(limits.availability)) return null;
-  const raw = limits[field];
-  if (raw === null) return null;
+  const display = input.chains?.routes.find((r) => r.id === route)?.max_transfer_display;
+  if (display === undefined) return null;
+  const atomic = parseToBaseUnits(display, GOLDCOIN_DECIMALS);
+  if (atomic === null) return null;
   return {
-    atomic: raw,
-    decimals: ROBINHOOD_DECIMALS,
-    source: `GET /robinhood/limits · ${field}`,
+    atomic,
+    decimals: GOLDCOIN_DECIMALS,
+    source: "GET /chains · max_transfer_display",
   };
 }
 

@@ -396,33 +396,45 @@ describe("BridgeForm — GlcToRhn once the backend opens the route", () => {
     await waitFor(() => expect(estimate).toHaveTextContent("970.00"));
   });
 
-  it("drops the Solana MAXIMUM rather than relabelling it", async () => {
-    // `GET /limits` describes the SOLANA program's `BridgeConfig`, so its
-    // per-transfer ceiling may not follow the user onto a Robinhood pair.
-    // No maximum appears here at all, for a reason specific to this
-    // fixture rather than to Robinhood: the route is CLOSED in it, so
-    // `GET /robinhood/limits` is never queried. On an open route the
-    // contract's own ceiling is shown — see
-    // `bridge-form-robinhood-max.test.tsx`.
-    //
-    // The MINIMUM is a different kind of figure and deliberately DOES
-    // survive the switch: it is one policy floor published per route by
-    // `GET /chains`, identical on every route, and owes nothing to either
-    // chain's limits. Carrying it across is not relabelling a Solana
-    // number — it is the same number.
+  it("shows the new route's OWN maximum, never the previous route's", async () => {
+    /*
+     * Switching destination switches the limit with it. This used to drop
+     * the maximum entirely on a Robinhood pair — `GET /limits` describes
+     * the SOLANA program's `BridgeConfig`, and relabelling its ceiling for
+     * a Robinhood route would have published one that route does not have.
+     * Dropping it was the right call against the wrong alternative: both
+     * routes publish their own limit, so the form shows each route its
+     * own.
+     *
+     * Here the two happen to differ — `GlcToSol` at 20,000 against
+     * `GlcToRhn`'s own figure — and the assertion is that the line tracks
+     * the route rather than carrying a stale number across the switch.
+     *
+     * The MINIMUM is a different kind of figure and deliberately DOES
+     * survive: one policy floor published per route, identical on every
+     * route. Carrying it across is not relabelling a Solana number — it is
+     * the same number.
+     */
     const user = userEvent.setup();
     renderWithQueryClient(<BridgeForm />);
     await waitForRouteVerdict();
 
     const solanaLine = (await screen.findByText(/^Min /)).textContent;
-    expect(solanaLine).toContain("Max ");
+    expect(solanaLine).toContain(
+      `Max ${Number(fixtures.ROUTE_MAX_TRANSFER_DISPLAY.GlcToSol).toLocaleString("en-US")} GLC`,
+    );
+
     await selectNetwork(user, "Destination network", /Robinhood Chain/);
 
-    await waitFor(() => expect(screen.queryByText(/^Max /)).not.toBeInTheDocument());
+    const expectedRobinhood = `Max ${Number(
+      fixtures.ROUTE_MAX_TRANSFER_DISPLAY.GlcToRhn,
+    ).toLocaleString("en-US")} GLC`;
+    await waitFor(() =>
+      expect(screen.getByText(/^Min /).textContent).toContain(expectedRobinhood),
+    );
     const robinhoodLine = screen.getByText(/^Min /).textContent;
-    // The same floor, and none of the Solana ceiling.
+    // The same floor, carried across.
     expect(robinhoodLine).toContain(solanaLine.slice(0, solanaLine.indexOf(" · ")));
-    expect(robinhoodLine).not.toContain("Max ");
   });
 });
 

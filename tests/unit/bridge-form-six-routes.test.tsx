@@ -318,6 +318,81 @@ describe("the source minimum is 100 GLC on every route, ungrossed", () => {
   });
 });
 
+describe("the source maximum is THIS route's own, on every route", () => {
+  /*
+   * The figures the backend publishes per route, and the reason a
+   * chain-level ceiling could never have stated them: two routes leaving
+   * the same chain carry different limits.
+   *
+   * The form showed and ENFORCED the wrong one on three of the six.
+   * `SolToGlc` and `SolToRhn` were held to the Solana program's 20,000
+   * `per_transfer_limit` against a real 50,000 — refusing amounts the
+   * backend accepts — and `GlcToRhn` was offered the custody contract's
+   * 2,000,000 `outboundMax` against a real 20,000, which is the worse
+   * direction: MAX filled in a figure the backend would refuse.
+   */
+  const EXPECTED = {
+    GlcToSol: "20,000",
+    SolToGlc: "50,000",
+    GlcToRhn: "20,000",
+    RhnToGlc: "50,000",
+    SolToRhn: "50,000",
+    RhnToSol: "50,000",
+  } as const;
+
+  it.each(ROUTES)("shows $route's published maximum on $label", async (entry) => {
+    const user = userEvent.setup();
+    renderWithQueryClient(<BridgeForm />);
+    await waitForRouteVerdict();
+    await choose(user, entry);
+    await waitFor(() => expect(summaryRoute()).toContain(entry.label));
+
+    const expected = EXPECTED[entry.route as keyof typeof EXPECTED];
+    await waitFor(() =>
+      expect(screen.getByText(new RegExp(`Max ${expected} GLC`))).toBeInTheDocument(),
+    );
+  });
+
+  it.each(ROUTES)(
+    "agrees with the figure /chains published for $route",
+    async (entry) => {
+      // The table above is the production contract; this asserts the form
+      // is reading the field rather than agreeing with it by coincidence.
+      const published =
+        fixtures.ROUTE_MAX_TRANSFER_DISPLAY[
+          entry.route as keyof typeof fixtures.ROUTE_MAX_TRANSFER_DISPLAY
+        ];
+      expect(EXPECTED[entry.route as keyof typeof EXPECTED]).toBe(
+        Number(published).toLocaleString("en-US"),
+      );
+    },
+  );
+
+  it("never shows a chain ceiling in place of a route's limit", async () => {
+    // A contract whose payout ceiling is the production two million. It
+    // bounds the contract's own leg and is not a limit any user is
+    // admitted against, so it must appear on no route at all.
+    getRobinhoodLimits.mockResolvedValue({
+      ...fixtures.robinhoodLimitsFixture(now, { open: true }),
+      inbound_max_atomic: "2000000000000000000000000",
+      outbound_max_atomic: "2000000000000000000000000",
+    });
+    const user = userEvent.setup();
+    renderWithQueryClient(<BridgeForm />);
+    await waitForRouteVerdict();
+
+    for (const entry of ROUTES) {
+      await choose(user, entry);
+      await waitFor(() => expect(summaryRoute()).toContain(entry.label));
+      const expected = EXPECTED[entry.route as keyof typeof EXPECTED];
+      await waitFor(() =>
+        expect(screen.getByText(new RegExp(`Max ${expected} GLC`))).toBeInTheDocument(),
+      );
+      expect(screen.queryByText(/2,000,000/)).toBeNull();
+    }
+  });
+});
+
 describe("availability comes from /chains, per route", () => {
   it("reports each route open when the backend does", async () => {
     const user = userEvent.setup();

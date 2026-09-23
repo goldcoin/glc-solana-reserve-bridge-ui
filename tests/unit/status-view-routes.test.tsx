@@ -104,6 +104,21 @@ function chainsWith(available: Record<string, boolean>): ChainsViewDto {
   };
 }
 
+/**
+ * `/chains` from a backend that publishes no per-route maximum — a
+ * deployment predating the field. The row must disappear rather than fall
+ * back to a chain ceiling.
+ */
+function withoutPublishedMaxima(): ChainsViewDto {
+  const base = chainsWith(ALL);
+  return {
+    ...base,
+    routes: base.routes.map(
+      ({ max_transfer_display: _omit, ...rest }): RouteViewDto => rest,
+    ),
+  };
+}
+
 const ALL = {
   GlcToSol: true,
   SolToGlc: true,
@@ -312,20 +327,62 @@ describe("the six cards show the right figures each", () => {
     expect(glcToRhn.queryByText("3%")).toBeNull();
   });
 
-  it("shows a Robinhood route's per-transfer bounds, from the contract", async () => {
-    // This row used to be absent on a Robinhood card: `GET /limits`
-    // carries the Solana program's config alone, and filling the row from
-    // it would state a ceiling neither Robinhood chain enforces. The
-    // figures now come from the places that DO enforce them — the
-    // published policy floor, and `GET /robinhood/limits`' own
-    // `outboundMax`.
+  it("shows a Robinhood route's per-transfer bounds, from its own registry entry", async () => {
+    // This row used to be filled from the custody contract's
+    // `outboundMax`, which is a ceiling on the PAYOUT leg and not the
+    // limit a user's deposit is admitted against — in production it read
+    // 2,000,000 here while the backend was admitting 20,000. Both figures
+    // now come from the route's own `GET /chains` entry.
     renderWithQueryClient(<StatusView />);
     const glcToRhn = await card("GlcToRhn");
     await glcToRhn.findByText("Source minimum");
     expect(glcToRhn.getByText(/100\.00/)).toBeInTheDocument();
     expect(glcToRhn.getByText("Max per transfer")).toBeInTheDocument();
     expect(glcToRhn.getByText(/20,000\.00/)).toBeInTheDocument();
+    expect(glcToRhn.queryByText(/2,000,000/)).toBeNull();
     expect(glcToRhn.queryByText("Not published")).toBeNull();
+  });
+
+  it("shows every one of the six cards the maximum published for THAT route", async () => {
+    /*
+     * The figures the backend publishes per route, and the whole point of
+     * the field: they are not all equal, and no chain-level ceiling can
+     * express that. Before this, three of the six were wrong on the live
+     * page — `SolToGlc` and `SolToRhn` showed the Solana program's 20,000
+     * against a real 50,000, and `GlcToRhn` showed the custody contract's
+     * 2,000,000 against a real 20,000.
+     */
+    const EXPECTED = {
+      GlcToSol: "20,000.00",
+      SolToGlc: "50,000.00",
+      GlcToRhn: "20,000.00",
+      RhnToGlc: "50,000.00",
+      SolToRhn: "50,000.00",
+      RhnToSol: "50,000.00",
+    } as const;
+
+    renderWithQueryClient(<StatusView />);
+    for (const [route, expected] of Object.entries(EXPECTED)) {
+      const scope = await card(route as keyof typeof CARDS);
+      expect(await scope.findByText("Max per transfer")).toBeInTheDocument();
+      expect(
+        scope.getByText(new RegExp(expected.replace(/[.,]/g, "\\$&"))),
+      ).toBeInTheDocument();
+      // The destination reserve's capacity is a different quantity and may
+      // legitimately be far larger; it is never this row.
+      expect(scope.queryByText(/2,000,000/)).toBeNull();
+    }
+  });
+
+  it("keeps Max per transfer and Destination reserve capacity separate", async () => {
+    // A card carries both, they answer different questions, and the
+    // capacity figure is the fixture's own distinct number.
+    renderWithQueryClient(<StatusView />);
+    const glcToSol = await card("GlcToSol");
+    await glcToSol.findByText("Max per transfer");
+    expect(glcToSol.getByText("Destination reserve capacity")).toBeInTheDocument();
+    expect(glcToSol.getByText(new RegExp(SOLANA_CAPACITY.display))).toBeInTheDocument();
+    expect(glcToSol.getByText(/20,000\.00/)).toBeInTheDocument();
   });
 
   it("shows the 100 GLC source minimum on every one of the six cards", async () => {
@@ -343,13 +400,11 @@ describe("the six cards show the right figures each", () => {
     }
   });
 
-  it("keeps the minimum when the maximum could not be read", async () => {
+  it("keeps the minimum when the registry publishes no maximum", async () => {
     // The two used to be one "Per-transfer limits" range rendered only when
-    // BOTH existed, so an unread contract blanked the one figure every route
+    // BOTH existed, so an unread ceiling blanked the one figure every route
     // publishes and a user needs before typing an amount.
-    getRobinhoodLimits.mockResolvedValue(
-      fixtures.robinhoodLimitsFixture(() => new Date(), { open: false }),
-    );
+    getChains.mockResolvedValue(withoutPublishedMaxima());
     renderWithQueryClient(<StatusView />);
     const glcToRhn = await card("GlcToRhn");
     expect(await glcToRhn.findByText("Source minimum")).toBeInTheDocument();
@@ -368,16 +423,16 @@ describe("the six cards show the right figures each", () => {
     }
   });
 
-  it("omits the limits row entirely when the contract could not be read", async () => {
+  it("omits the maximum row entirely when the registry publishes none", async () => {
     // Absent rather than a placeholder, which is what made the card read
-    // as unfinished — and absent rather than zero, which would say the
-    // route takes nothing.
-    getRobinhoodLimits.mockResolvedValue(
-      fixtures.robinhoodLimitsFixture(() => new Date(), { open: false }),
-    );
+    // as unfinished — absent rather than zero, which would say the route
+    // takes nothing, and absent rather than a chain ceiling stood in for
+    // it, which is what this row used to do.
+    getChains.mockResolvedValue(withoutPublishedMaxima());
     renderWithQueryClient(<StatusView />);
     const glcToRhn = await card("GlcToRhn");
     await glcToRhn.findByText("Route fee");
+    expect(glcToRhn.queryByText("Max per transfer")).toBeNull();
     expect(glcToRhn.queryByText(/20,000\.00/)).toBeNull();
   });
 });

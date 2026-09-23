@@ -145,6 +145,17 @@ export function robinhoodContractLeg(
  * so the figure narrows to whatever `sourceDecimals` says. FLOORED, never
  * rounded — the same "never more permissive than the chain" convention
  * `atomicRescaleFloor` exists for.
+ *
+ * # NOT the maximum a user is shown
+ *
+ * This is the CONTRACT's bound on its own leg: what `deposit()` reverts
+ * above, and what a payout may not exceed. It is not the limit the bridge
+ * admits a transfer against, and it must never be rendered as one — the
+ * form and the status cards both read `max_transfer_display` from that
+ * route's own `GET /chains` entry through `routeSourceMaximum`. Reading
+ * this field for the user-facing maximum is exactly what offered
+ * `GlcToRhn` the contract's 2,000,000 `outboundMax` against a real limit
+ * of 20,000.
  */
 export function robinhoodPerTransferMaximum(
   leg: RobinhoodContractLeg | null,

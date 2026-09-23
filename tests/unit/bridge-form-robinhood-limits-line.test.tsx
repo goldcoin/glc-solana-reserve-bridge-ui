@@ -10,11 +10,7 @@ import {
 import * as fixtures from "@/lib/api/mock/fixtures";
 import type * as EvmModule from "@/lib/evm";
 import { BridgeForm } from "@/features/bridge/BridgeForm";
-import {
-  ROBINHOOD_DECIMALS,
-  robinhoodPerTransferMaximum,
-  robinhoodRollingRemaining,
-} from "@/lib/bridge";
+import { ROBINHOOD_DECIMALS, robinhoodRollingRemaining } from "@/lib/bridge";
 import { atomicRescaleFloor } from "@/lib/bridge/canonical";
 import { robinhoodLimitsSchema } from "@/lib/api/schemas/robinhood";
 import { GOLDCOIN_DECIMALS } from "@/lib/config/env";
@@ -236,6 +232,16 @@ function asDisplayed(raw: string, decimals: number): string {
 }
 
 /**
+ * One route's published maximum, formatted as the line renders it. The
+ * source token's precision does not change the text: the figure is a
+ * whole number of GLC, and the display trims to significant digits.
+ */
+function routeMax(route: "GlcToRhn" | "RhnToGlc"): string {
+  const [whole = "0"] = fixtures.ROUTE_MAX_TRANSFER_DISPLAY[route].split(".");
+  return `${BigInt(whole).toLocaleString("en-US")} GLC`;
+}
+
+/**
  * The three parts the line must carry for one leg, each derived from the
  * fixture rather than written out.
  *
@@ -245,17 +251,17 @@ function asDisplayed(raw: string, decimals: number): string {
 function expected(leg: "deposit" | "payout") {
   const limits = openLimits();
   const decimals = DECIMALS[leg];
-  const max = robinhoodPerTransferMaximum(leg, limits, decimals);
   const remaining = robinhoodRollingRemaining(leg, limits, decimals);
-  if (max === undefined || remaining === undefined) {
-    throw new Error("the open fixture must publish a ceiling and a window");
+  if (remaining === undefined) {
+    throw new Error("the open fixture must publish a window");
   }
   return {
-    // The MINIMUM is not a contract figure and is not per leg: one
-    // published policy floor, the same on every route, which is why it is
-    // read straight from the route fixture rather than derived here.
+    // Neither BOUND is a contract figure, and neither is per leg: both
+    // are published per route by the backend, which is why they are read
+    // straight from the route fixture rather than derived here. Only the
+    // remainder comes from the contract's own accumulator.
     min: asDisplayed(fixtures.SOURCE_MINIMUM_ATOMIC, GOLDCOIN_DECIMALS),
-    max: asDisplayed(max, decimals),
+    max: routeMax(leg === "deposit" ? "RhnToGlc" : "GlcToRhn"),
     remaining: asDisplayed(remaining, decimals),
   };
 }
@@ -278,7 +284,7 @@ async function selectRhnToGlc(user: ReturnType<typeof userEvent.setup>) {
 }
 
 describe("GlcToRhn — the whole line", () => {
-  it("shows Min · Max · remaining today, all from the contract", async () => {
+  it("shows Min · Max from the route, and remaining today from the contract", async () => {
     const user = userEvent.setup();
     renderWithQueryClient(<BridgeForm />);
     await waitForRouteVerdict();
@@ -335,7 +341,7 @@ describe("GlcToRhn — the whole line", () => {
 });
 
 describe("RhnToGlc — the whole line", () => {
-  it("shows Min · Max · remaining today, all from the contract", async () => {
+  it("shows Min · Max from the route, and remaining today from the contract", async () => {
     const user = userEvent.setup();
     renderWithQueryClient(<BridgeForm />);
     await waitForRouteVerdict();
@@ -454,10 +460,11 @@ describe("an unread window publishes nothing", () => {
     // Not "0 GLC remaining today", which would say the route is done for
     // the day when nobody actually asked the chain.
     expect(limitsLine()).not.toContain("remaining today");
-    expect(limitsLine()).not.toContain("Max ");
-    // The published policy floor survives: it never came from the
-    // contract, so an unreachable contract cannot make it unknown.
+    // BOTH bounds survive. They never came from the contract — the
+    // maximum stopped doing so when the backend began publishing it per
+    // route — so an unreachable contract cannot make either unknown.
     expect(limitsLine()).toContain(`Min ${expected("payout").min}`);
+    expect(limitsLine()).toContain(`Max ${routeMax("GlcToRhn")}`);
   });
 
   it("keeps Min and Max when only the window is missing", async () => {

@@ -2,7 +2,8 @@ import type { Route } from "@/lib/api/schemas/common";
 import { routeSchema } from "@/lib/api/schemas/common";
 import type { ChainsViewDto } from "@/lib/api/schemas/chains";
 import { GOLDCOIN_DECIMALS } from "@/lib/config/env";
-import { atomicRescaleCeil } from "./canonical";
+import { atomicRescaleCeil, atomicRescaleFloor } from "./canonical";
+import { parseToBaseUnits } from "@/lib/format/amount";
 
 /**
  * The ONE place a (source, destination) network pair becomes a backend
@@ -196,4 +197,63 @@ export function routeSourceMinimum(
   )?.min_transfer_atomic;
   if (raw === undefined) return undefined;
   return atomicRescaleCeil(raw, GOLDCOIN_DECIMALS, sourceDecimals);
+}
+
+/**
+ * The authoritative source-side MAXIMUM for one route, in the SOURCE
+ * token's own base units — the figure the bridge form renders as
+ * "Max … GLC" and validates against.
+ *
+ * # One rule, one place — the same correction the minimum already had
+ *
+ * `GET /chains` publishes `max_transfer_display` per route: the limit the
+ * backend admits a transfer against, and the same one `POST /transfers`
+ * and `POST /quote` enforce. Like the minimum, it has no per-route
+ * arithmetic and no route-family branch here.
+ *
+ * What it replaced was a derivation across chain ceilings — the Solana
+ * program's `per_transfer_limit` where a static pair table said that
+ * bound the route, `GlcRobinhoodBridge`'s `inboundMax`/`outboundMax`
+ * where it said the contract did, and for a Goldcoin-sourced route, which
+ * has no source ceiling at all, whichever ceiling bounded the
+ * DESTINATION payout. Each of those is a real on-chain limit and none of
+ * them is the one a user is admitted against.
+ *
+ * It could not have been right in general, either: a per-transfer maximum
+ * is not a property of a chain. `SolToGlc` and `SolToRhn` leave the same
+ * chain carrying different limits — 50,000 against the Solana program's
+ * 20,000 `per_transfer_limit` — so no chain-level figure can state both.
+ * In production that showed 20,000 on both, and the custody contract's
+ * 2,000,000 `outboundMax` on `GlcToRhn` against a real limit of 20,000.
+ *
+ * # Units, and why the rounding is DOWN
+ *
+ * The wire figure is a canonical 8dp decimal string (`"20000.00000000"`),
+ * parsed with the same exact integer arithmetic every amount in this app
+ * goes through. A source chain with finer precision (Robinhood's 18)
+ * widens exactly; one with coarser precision (the Solana mint's 6)
+ * narrows, and narrowing is FLOORED — the mirror of the minimum's ceil. A
+ * ceiling rounded UP would offer an amount the backend refuses, which is
+ * the one direction a maximum must never move.
+ *
+ * `undefined` when no route joins those two chains, when the backend
+ * predates the field, while `GET /chains` is in flight, or when the
+ * published figure does not parse. Never a fallback: an invented ceiling
+ * is the bug this field exists to end, and an absent maximum simply means
+ * the form applies no upper bound of its own — the backend still refuses
+ * an oversized transfer, with its own sentence.
+ */
+export function routeSourceMaximum(
+  chains: ChainsViewDto | undefined,
+  sourceChainId: string,
+  destinationChainId: string,
+  sourceDecimals: number,
+): string | undefined {
+  const display = chains?.routes.find(
+    (r) => r.source_chain === sourceChainId && r.destination_chain === destinationChainId,
+  )?.max_transfer_display;
+  if (display === undefined) return undefined;
+  const canonical = parseToBaseUnits(display, GOLDCOIN_DECIMALS);
+  if (canonical === null) return undefined;
+  return atomicRescaleFloor(canonical, GOLDCOIN_DECIMALS, sourceDecimals);
 }

@@ -181,6 +181,16 @@ async function robinhoodSource(user: ReturnType<typeof userEvent.setup>) {
   await selectNetwork(user, "Source network", /Robinhood Chain/);
 }
 
+/**
+ * One route's published maximum as a whole-GLC string, read off the same
+ * `/chains` field the form reads — never written out as a literal that
+ * would survive the backend changing it.
+ */
+function routeMaxWhole(route: "GlcToRhn" | "RhnToGlc"): string {
+  const [whole = "0"] = fixtures.ROUTE_MAX_TRANSFER_DISPLAY[route].split(".");
+  return whole;
+}
+
 function balanceOf(glc: bigint) {
   return {
     isPending: false,
@@ -313,9 +323,10 @@ describe("Robinhood source — MAX", () => {
     expect(amountField()).toHaveValue("1234");
   });
 
-  it("CAPS at 20,000 GLC when the balance is larger", async () => {
-    // The contract's own `inboundMax`, read from `GET /robinhood/limits`.
-    // MAX = min(balance, route max), never the raw balance.
+  it("CAPS at this route's published maximum when the balance is larger", async () => {
+    // `RhnToGlc`'s own limit from `GET /chains`, not the custody
+    // contract's `inboundMax` — MAX = min(balance, route max), never the
+    // raw balance.
     evm.balance = balanceOf(75_000n);
     const user = userEvent.setup();
     renderWithQueryClient(<BridgeForm />);
@@ -324,11 +335,11 @@ describe("Robinhood source — MAX", () => {
     await waitFor(() => expect(maxButton()).toBeEnabled());
     await user.click(maxButton()!);
 
-    expect(amountField()).toHaveValue("20000");
+    expect(amountField()).toHaveValue(routeMaxWhole("RhnToGlc"));
   });
 
   it("takes the balance when it is exactly the route max", async () => {
-    evm.balance = balanceOf(20_000n);
+    evm.balance = balanceOf(BigInt(routeMaxWhole("RhnToGlc")));
     const user = userEvent.setup();
     renderWithQueryClient(<BridgeForm />);
     await robinhoodSource(user);
@@ -336,7 +347,7 @@ describe("Robinhood source — MAX", () => {
     await waitFor(() => expect(maxButton()).toBeEnabled());
     await user.click(maxButton()!);
 
-    expect(amountField()).toHaveValue("20000");
+    expect(amountField()).toHaveValue(routeMaxWhole("RhnToGlc"));
   });
 
   it("subtracts nothing for gas — gas is paid in the native asset, not GLC", async () => {
@@ -389,7 +400,7 @@ describe("Robinhood source — MAX", () => {
     await waitFor(() => expect(maxButton()).toBeDisabled());
   });
 
-  it("falls back to the balance alone when the contract bounds are unread", async () => {
+  it("falls back to the balance alone when no ceiling bounds it below that", async () => {
     // An absent limit is skipped, never treated as zero: "we do not know
     // this ceiling" must not present as "you may bridge nothing".
     getRobinhoodLimits.mockResolvedValue(
