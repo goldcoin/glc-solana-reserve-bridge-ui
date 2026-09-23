@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { __envSchemaForTests as envSchema } from "@/lib/config/env";
+import { env, __envSchemaForTests as envSchema } from "@/lib/config/env";
 import {
   ROBINHOOD_CHAIN_ID,
   ROBINHOOD_GLC_TOKEN_ADDRESS,
@@ -18,7 +18,7 @@ const base = {
   officialDomains: "example.test",
   bridgeApiMode: "mock",
   solanaCluster: "devnet",
-  reserveMintAddress: "Hn6Kdxs6cJrXDLvArAief8ueTgdZLkRacLPPUZo2pump",
+  reserveMintAddress: "GLCzUtuEUJJRBozMrwH3BN5TEy2T7XftGH8TR3yNX5HH",
 };
 
 describe("public environment schema", () => {
@@ -44,15 +44,17 @@ describe("public environment schema", () => {
   describe("retired program ids on mainnet-beta", () => {
     // Mirrors the backend's own permanently-retired denylist
     // (glc-solana-reserve-bridge: service/src/bin/glc-mainnet-bootstrap.rs):
-    // the scaffold/dev id was never deployed to a public cluster, and the
-    // first mainnet deployment has been closed with its rent reclaimed. A
-    // mainnet config carrying either would build deposit instructions
+    // the scaffold/dev id was never deployed to a public cluster, the first
+    // mainnet deployment has been closed with its rent reclaimed, and the
+    // second is bound to the pre-migration mint and reserve vault. A
+    // mainnet config carrying any of them would build deposit instructions
     // against a dead program, so startup fails instead.
     const SCAFFOLD_DEV_ID = "BnCFcMaZtpXUzZhXZdQSeQWH4A2BMv5ZaebGe6Ysv2oY";
     const CLOSED_MAINNET_ID = "7h2zSJuqpmbSq4seeXDdaJChVoxhEWwA9b8qG6Ct1GNn";
-    const PRODUCTION_ID = "6tmLSP2j2thito2RpByqgfKHuVRSLcNd9c5FkrLJMjja";
+    const SUPERSEDED_MAINNET_ID = "6tmLSP2j2thito2RpByqgfKHuVRSLcNd9c5FkrLJMjja";
+    const PRODUCTION_ID = "H8SoqRyBFQaT1o33vPGj7KCftFXs3SnLYtE81h1RRJgb";
 
-    it.each([SCAFFOLD_DEV_ID, CLOSED_MAINNET_ID])(
+    it.each([SCAFFOLD_DEV_ID, CLOSED_MAINNET_ID, SUPERSEDED_MAINNET_ID])(
       "refuses retired id %s when the cluster is mainnet-beta",
       (retired) => {
         const result = envSchema.safeParse({
@@ -85,6 +87,85 @@ describe("public environment schema", () => {
           reserveProgramId: SCAFFOLD_DEV_ID,
         }).success,
       ).toBe(true);
+    });
+  });
+
+  describe("the Token-2022 asset migration", () => {
+    // Production moved mint, bridge program and reserve vault together. The
+    // UI's job here is narrow but absolute: a deployment must not be able to
+    // regress to the pre-migration asset and start deriving token accounts
+    // for a mint the reserve does not hold.
+    const CURRENT_MINT = "GLCzUtuEUJJRBozMrwH3BN5TEy2T7XftGH8TR3yNX5HH";
+    const RETIRED_MINT = "Hn6Kdxs6cJrXDLvArAief8ueTgdZLkRacLPPUZo2pump";
+
+    it("defaults to the current canonical mint when the variable is unset", () => {
+      expect(env.reserveMintAddress).toBe(CURRENT_MINT);
+    });
+
+    it("accepts the current mint on mainnet-beta", () => {
+      expect(
+        envSchema.safeParse({
+          ...base,
+          solanaCluster: "mainnet-beta",
+          reserveMintAddress: CURRENT_MINT,
+        }).success,
+      ).toBe(true);
+    });
+
+    it("refuses the retired mint when the cluster is mainnet-beta", () => {
+      const result = envSchema.safeParse({
+        ...base,
+        solanaCluster: "mainnet-beta",
+        reserveMintAddress: RETIRED_MINT,
+      });
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error.issues[0]?.message).toContain("retired Solana GLC mint");
+      }
+    });
+
+    it("leaves non-mainnet clusters free to point at any test mint", () => {
+      expect(
+        envSchema.safeParse({
+          ...base,
+          solanaCluster: "devnet",
+          reserveMintAddress: RETIRED_MINT,
+        }).success,
+      ).toBe(true);
+    });
+  });
+
+  describe("the announcement flag", () => {
+    /*
+     * Fail-closed, and the default matters more than the parse: an
+     * announcement that outlives its launch is the failure this flag
+     * exists to prevent, so anything that is not exactly "true" hides the
+     * strip — and none of it may fail the build, because taking a
+     * deployment down over a banner would be worse than the banner.
+     */
+    it("is off when the variable is unset", () => {
+      const parsed = envSchema.safeParse(base);
+      expect(parsed.success).toBe(true);
+      if (parsed.success) expect(parsed.data.announcementEnabled).toBe(false);
+    });
+
+    it("is off for this build, which sets no announcement flag", () => {
+      expect(env.announcementEnabled).toBe(false);
+    });
+
+    it.each([
+      ["true", true],
+      ["TRUE", true],
+      ["  true  ", true],
+      ["false", false],
+      ["", false],
+      ["1", false],
+      ["yes", false],
+      ["truthy", false],
+    ])("reads %o as %s", (value, expected) => {
+      const parsed = envSchema.safeParse({ ...base, announcementEnabled: value });
+      expect(parsed.success).toBe(true);
+      if (parsed.success) expect(parsed.data.announcementEnabled).toBe(expected);
     });
   });
 

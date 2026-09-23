@@ -18,9 +18,43 @@ import {
 } from "@/lib/solana/fund-reserve";
 
 const WALLET = new PublicKey("9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM");
-const MINT = new PublicKey("Hn6Kdxs6cJrXDLvArAief8ueTgdZLkRacLPPUZo2pump");
+const MINT = new PublicKey("GLCzUtuEUJJRBozMrwH3BN5TEy2T7XftGH8TR3yNX5HH");
 const RESERVE_TOKEN_ACCOUNT = new PublicKey(RESERVE_TOKEN_ACCOUNT_ADDRESS);
 const SOME_OTHER_ACCOUNT = new PublicKey("11111111111111111111111111111112");
+
+/** The pre-migration reserve vault. Bound to the retired mint; never fundable. */
+const RETIRED_RESERVE_TOKEN_ACCOUNT = new PublicKey(
+  "5AFssVkaz9nzS2tSQowUqYYmpg7wPSJa1mLKxuHKP2kp",
+);
+
+describe("the post-migration Solana asset, pinned", () => {
+  /*
+   * Production moved the mint, the bridge program and the reserve vault
+   * together, and the funding page was verified against the new ones (a
+   * 100 GLC transfer, then the reserve funded to 2,000,000 GLC). These are
+   * the three values that decide where an operator's funds land, so they
+   * are asserted literally rather than through the constants that define
+   * them — a future edit to the source has to change this file too.
+   */
+  it("funds the current reserve token account, not the retired one", () => {
+    expect(RESERVE_TOKEN_ACCOUNT_ADDRESS).toBe(
+      "DS7dJAFRZhwp9TbxkHtrXihmzaidMm8sqWFrshUr5r5W",
+    );
+    expect(RESERVE_TOKEN_ACCOUNT_ADDRESS).not.toBe(
+      RETIRED_RESERVE_TOKEN_ACCOUNT.toBase58(),
+    );
+  });
+
+  it("builds against the current Token-2022 mint", () => {
+    expect(MINT.toBase58()).toBe("GLCzUtuEUJJRBozMrwH3BN5TEy2T7XftGH8TR3yNX5HH");
+  });
+
+  it("uses the Token-2022 program, never the original SPL Token program", () => {
+    expect(TOKEN_2022_PROGRAM_ID.toBase58()).toBe(
+      "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb",
+    );
+  });
+});
 
 describe("glcToAtomic — 6-decimal conversion", () => {
   it("1 GLC produces exactly 1,000,000 atomic units", () => {
@@ -61,6 +95,15 @@ describe("assertIsReserveTokenAccount — the runtime destination guard", () => 
     );
     expect(() => assertIsReserveTokenAccount(WALLET)).toThrow(DestinationMismatchError);
   });
+
+  it("refuses the retired pre-migration reserve vault", () => {
+    // The single most plausible wrong destination there is: it WAS the
+    // right one, it is still a real Token-2022 account, and a transfer to
+    // it would be checked against a mint the reserve no longer holds.
+    expect(() => assertIsReserveTokenAccount(RETIRED_RESERVE_TOKEN_ACCOUNT)).toThrow(
+      DestinationMismatchError,
+    );
+  });
 });
 
 describe("buildTransferCheckedInstruction — the funding instruction itself", () => {
@@ -82,6 +125,10 @@ describe("buildTransferCheckedInstruction — the funding instruction itself", (
     const instruction = build(RESERVE_TOKEN_ACCOUNT);
     const destinationKey = instruction.keys[2];
     expect(destinationKey?.pubkey.toBase58()).toBe(RESERVE_TOKEN_ACCOUNT_ADDRESS);
+  });
+
+  it("refuses to build a transaction against the retired reserve vault", () => {
+    expect(() => build(RETIRED_RESERVE_TOKEN_ACCOUNT)).toThrow(DestinationMismatchError);
   });
 
   it("refuses to build a transaction with any destination other than the reserve token account", () => {

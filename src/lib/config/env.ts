@@ -63,6 +63,19 @@ const templateSchema = z.string().refine((value) => value.includes("{value}"), {
   error: "must contain the {value} placeholder",
 });
 
+/**
+ * A fail-closed public feature flag.
+ *
+ * Only the exact string "true" turns a flag ON. Unset, empty, "false", or
+ * anything else at all resolves to false rather than failing startup: a
+ * flag carrying a typo must hide the feature it gates, never take the whole
+ * deployment down over a banner.
+ */
+const flagSchema = z
+  .string()
+  .optional()
+  .transform((value) => value?.trim().toLowerCase() === "true");
+
 const csvSchema = z
   .string()
   .transform((value) =>
@@ -102,7 +115,24 @@ const versionBytesSchema = z
   );
 
 /** The canonical Solana GLC (Token-2022) mint. Public, protocol-level data. */
-const DEFAULT_RESERVE_MINT_ADDRESS = "Hn6Kdxs6cJrXDLvArAief8ueTgdZLkRacLPPUZo2pump";
+const DEFAULT_RESERVE_MINT_ADDRESS = "GLCzUtuEUJJRBozMrwH3BN5TEy2T7XftGH8TR3yNX5HH";
+
+/**
+ * Mints the bridge has permanently retired.
+ *
+ * - `Hn6K…2pump` — the original Solana GLC mint, superseded by the
+ *   Token-2022 asset migration. The reserve, the bridge program and the
+ *   funding page all moved to `GLCz…NX5HH`; nothing settles against the
+ *   old mint any more.
+ *
+ * A mainnet-beta deployment configured with a retired mint would derive
+ * associated token accounts for an asset the reserve does not hold, so it
+ * fails startup here rather than in users' wallets. Non-mainnet clusters
+ * are exempt: a devnet deployment may legitimately point at any test mint.
+ */
+const RETIRED_RESERVE_MINT_ADDRESSES = new Set([
+  "Hn6Kdxs6cJrXDLvArAief8ueTgdZLkRacLPPUZo2pump",
+]);
 
 /**
  * Program ids the bridge has permanently retired, mirrored from the backend's
@@ -113,6 +143,9 @@ const DEFAULT_RESERVE_MINT_ADDRESS = "Hn6Kdxs6cJrXDLvArAief8ueTgdZLkRacLPPUZo2pu
  *   deploy at during development, but never deployed to a public cluster.
  * - `7h2z…1GNn` — the first mainnet deployment, since permanently closed
  *   with its rent reclaimed. A transaction sent to it can never succeed.
+ * - `6tmL…MJja` — the second mainnet deployment, retired by the Token-2022
+ *   asset migration. It is bound to the old mint and the old reserve vault,
+ *   so a deposit built against it can never be settled.
  *
  * A mainnet-beta deployment configured with either is a stale config that
  *  would build deposit instructions against a dead or never-deployed
@@ -122,6 +155,7 @@ const DEFAULT_RESERVE_MINT_ADDRESS = "Hn6Kdxs6cJrXDLvArAief8ueTgdZLkRacLPPUZo2pu
 const RETIRED_RESERVE_PROGRAM_IDS = new Set([
   "BnCFcMaZtpXUzZhXZdQSeQWH4A2BMv5ZaebGe6Ysv2oY",
   "7h2zSJuqpmbSq4seeXDdaJChVoxhEWwA9b8qG6Ct1GNn",
+  "6tmLSP2j2thito2RpByqgfKHuVRSLcNd9c5FkrLJMjja",
 ]);
 
 /**
@@ -175,6 +209,15 @@ const envSchema = z
         "quota-paused",
       ])
       .default("operational"),
+
+    /**
+     * Whether the launch announcement strip renders at all
+     * (`NEXT_PUBLIC_ANNOUNCEMENT_ENABLED`). Fail-closed: unset means hidden.
+     * The strip itself is generic — what it announces lives in
+     * `src/lib/config/announcement.ts` — so a future token or chain launch
+     * flips this back on rather than rebuilding the feature.
+     */
+    announcementEnabled: flagSchema,
 
     solanaCluster: z
       .enum(["mainnet-beta", "testnet", "devnet", "localnet"])
@@ -288,6 +331,20 @@ const envSchema = z
         path: ["bridgeApiUrl"],
         message:
           "NEXT_PUBLIC_BRIDGE_API_URL is required when NEXT_PUBLIC_BRIDGE_API_MODE is 'http'",
+      });
+    }
+    if (
+      value.solanaCluster === "mainnet-beta" &&
+      RETIRED_RESERVE_MINT_ADDRESSES.has(value.reserveMintAddress)
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["reserveMintAddress"],
+        message:
+          `NEXT_PUBLIC_RESERVE_MINT_ADDRESS ${value.reserveMintAddress} is the ` +
+          "retired Solana GLC mint, superseded by the Token-2022 asset " +
+          "migration. The reserve holds the current mint only — unset this " +
+          "variable to use the canonical default, or see .env.example.",
       });
     }
     if (
@@ -434,6 +491,8 @@ function readEnv(): PublicEnv {
     bridgeApiProxyUpstreamUrl: present(
       process.env.NEXT_PUBLIC_BRIDGE_API_PROXY_UPSTREAM_URL,
     ),
+
+    announcementEnabled: present(process.env.NEXT_PUBLIC_ANNOUNCEMENT_ENABLED),
 
     solanaCluster: present(process.env.NEXT_PUBLIC_SOLANA_CLUSTER) ?? "devnet",
     solanaRpcUrl: present(process.env.NEXT_PUBLIC_SOLANA_RPC_URL),

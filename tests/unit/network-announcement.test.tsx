@@ -11,6 +11,7 @@ import {
   type NetworkAnnouncement as NetworkAnnouncementConfig,
   type NetworkAnnouncementStatus,
 } from "@/lib/config/announcement";
+import { env } from "@/lib/config/env";
 import * as fixtures from "@/lib/api/mock/fixtures";
 import type { ChainsViewDto } from "@/lib/api/schemas/chains";
 import type { BridgeStatusDto } from "@/lib/api/schemas/status";
@@ -31,7 +32,16 @@ import { renderWithQueryClient } from "./test-utils";
  * any state the strip can reach.
  */
 
-const config = NETWORK_ANNOUNCEMENT;
+/*
+ * The shipped announcement, forced on.
+ *
+ * `NETWORK_ANNOUNCEMENT.enabled` is deployment configuration
+ * (`NEXT_PUBLIC_ANNOUNCEMENT_ENABLED`) and is OFF in this build, which is
+ * the point of the flag — so every case that asserts what the strip renders
+ * passes this enabled copy explicitly. The cases that assert the flag
+ * itself use `NETWORK_ANNOUNCEMENT` unchanged.
+ */
+const config: NetworkAnnouncementConfig = { ...NETWORK_ANNOUNCEMENT, enabled: true };
 
 const getChains = vi.fn();
 const getStatus = vi.fn();
@@ -72,14 +82,14 @@ async function settled(label: string) {
 
 describe("rendering", () => {
   it("renders the resolved status as text, not as colour alone", async () => {
-    renderWithQueryClient(<NetworkAnnouncement />);
+    renderWithQueryClient(<NetworkAnnouncement announcement={config} />);
     // Both Robinhood routes ship closed, so the honest badge is
     // "Unavailable" — never a promise about when they open.
     expect(await settled(ANNOUNCEMENT_STATUS_LABEL.unavailable)).toBeInTheDocument();
   });
 
   it("renders the configured title as the section's heading", () => {
-    renderWithQueryClient(<NetworkAnnouncement />);
+    renderWithQueryClient(<NetworkAnnouncement announcement={config} />);
     expect(
       screen.getByRole("heading", { name: config.title, level: 2 }),
     ).toBeInTheDocument();
@@ -87,9 +97,9 @@ describe("rendering", () => {
   });
 
   it("renders exactly one line of copy, resolved from the status", async () => {
-    renderWithQueryClient(<NetworkAnnouncement />);
+    renderWithQueryClient(<NetworkAnnouncement announcement={config} />);
     expect(
-      await settled(ANNOUNCEMENT_STATUS_DESCRIPTION.unavailable),
+      await settled(ANNOUNCEMENT_STATUS_DESCRIPTION.unavailable(config.network)),
     ).toBeInTheDocument();
     expect(within(banner()).getAllByText(/./, { selector: "p" })).toHaveLength(1);
   });
@@ -104,6 +114,51 @@ describe("rendering", () => {
   });
 });
 
+describe("the enabled flag is deployment configuration, and fails closed", () => {
+  /*
+   * The Robinhood announcement is retired by configuration rather than by
+   * deleting the feature, so these cases pin both halves of that: the
+   * shipped config is off because the flag is unset, and the component
+   * renders exactly nothing when it is — no landmark, no heading, no
+   * dismissal control left behind for a screen reader to find.
+   */
+  it("takes `enabled` from NEXT_PUBLIC_ANNOUNCEMENT_ENABLED, not from a constant", () => {
+    expect(NETWORK_ANNOUNCEMENT.enabled).toBe(env.announcementEnabled);
+  });
+
+  it("ships OFF: the flag is unset in this build, so the strip is hidden", () => {
+    expect(NETWORK_ANNOUNCEMENT.enabled).toBe(false);
+
+    const { container } = renderWithQueryClient(<NetworkAnnouncement />);
+    expect(container).toBeEmptyDOMElement();
+    expect(screen.queryByRole("region", { name: "Network announcement" })).toBeNull();
+    expect(screen.queryByRole("heading", { name: config.title })).toBeNull();
+    expect(screen.queryAllByRole("button")).toHaveLength(0);
+  });
+
+  it("renders the whole strip when the flag is on", async () => {
+    renderWithQueryClient(<NetworkAnnouncement announcement={config} />);
+
+    expect(banner()).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: config.title, level: 2 }),
+    ).toBeInTheDocument();
+    expect(await settled(ANNOUNCEMENT_STATUS_LABEL.unavailable)).toBeInTheDocument();
+  });
+
+  it("is off for every value that is not exactly `true`, without failing", () => {
+    // The parser's own cases live in env.test.ts; this is the component's
+    // half of the contract — a flag that resolved to false hides the strip.
+    for (const enabled of [false]) {
+      const view = renderWithQueryClient(
+        <NetworkAnnouncement announcement={{ ...config, enabled }} />,
+      );
+      expect(view.container).toBeEmptyDOMElement();
+      view.unmount();
+    }
+  });
+});
+
 describe("no stale launch language survives", () => {
   const STALE = [/coming soon/i, /next week/i, /launch/i, /\bsoon\b/i];
 
@@ -114,7 +169,7 @@ describe("no stale launch language survives", () => {
       fixtures.chainsFixture(now, { robinhoodOpen: true, robinhoodAvailable: false }),
     ]) {
       getChains.mockResolvedValue(chains);
-      const view = renderWithQueryClient(<NetworkAnnouncement />);
+      const view = renderWithQueryClient(<NetworkAnnouncement announcement={config} />);
       await screen.findByRole("heading", { name: config.title, level: 2 });
       const text = banner().textContent;
       for (const pattern of STALE) {
@@ -129,7 +184,9 @@ describe("no stale launch language survives", () => {
       config.title,
       config.network,
       ...Object.values(ANNOUNCEMENT_STATUS_LABEL),
-      ...Object.values(ANNOUNCEMENT_STATUS_DESCRIPTION),
+      ...Object.values(ANNOUNCEMENT_STATUS_DESCRIPTION).map((line) =>
+        line(config.network),
+      ),
     ];
     for (const value of strings) {
       for (const pattern of STALE) {
@@ -201,11 +258,13 @@ describe("status derivation from GET /chains", () => {
 
   it("renders the available badge and copy once the backend opens both routes", async () => {
     getChains.mockResolvedValue(fixtures.chainsFixture(now, { robinhoodOpen: true }));
-    renderWithQueryClient(<NetworkAnnouncement />);
+    renderWithQueryClient(<NetworkAnnouncement announcement={config} />);
 
     expect(await settled(ANNOUNCEMENT_STATUS_LABEL.available)).toBeInTheDocument();
     expect(
-      within(banner()).getByText(ANNOUNCEMENT_STATUS_DESCRIPTION.available),
+      within(banner()).getByText(
+        ANNOUNCEMENT_STATUS_DESCRIPTION.available(config.network),
+      ),
     ).toBeInTheDocument();
     expect(
       within(banner()).queryByText(ANNOUNCEMENT_STATUS_LABEL.unavailable),
@@ -214,7 +273,7 @@ describe("status derivation from GET /chains", () => {
 
   it("carries the state in words and an icon, never in colour alone", async () => {
     getChains.mockResolvedValue(fixtures.chainsFixture(now, { robinhoodOpen: true }));
-    renderWithQueryClient(<NetworkAnnouncement />);
+    renderWithQueryClient(<NetworkAnnouncement announcement={config} />);
     const badge = await settled(ANNOUNCEMENT_STATUS_LABEL.available);
 
     expect(badge.querySelector("svg")).not.toBeNull();
@@ -230,29 +289,54 @@ describe("status derivation from GET /chains", () => {
     ];
     for (const value of all) {
       expect(ANNOUNCEMENT_STATUS_LABEL[value]).toBeTruthy();
-      expect(ANNOUNCEMENT_STATUS_DESCRIPTION[value]).toBeTruthy();
+      expect(ANNOUNCEMENT_STATUS_DESCRIPTION[value](config.network)).toBeTruthy();
     }
   });
 });
 
 describe("artwork", () => {
-  it("uses the mascot on the left and the Robinhood mark on the right", () => {
-    renderWithQueryClient(<NetworkAnnouncement />);
-    const sources = [...banner().querySelectorAll("img")].map((img) =>
-      // next/image rewrites the attribute through its loader in some
-      // configurations, so match on the underlying file rather than on an
-      // exact src string.
+  /** next/image rewrites `src` through its loader, so match the file. */
+  const sources = () =>
+    [...banner().querySelectorAll("img")].map((img) =>
       decodeURIComponent(img.getAttribute("src") ?? ""),
     );
 
-    expect(sources.some((src) => src.includes("/branding/goldcoin-mascot.png"))).toBe(
+  it("uses the mascot on the left and the configured network mark on the right", () => {
+    renderWithQueryClient(<NetworkAnnouncement announcement={config} />);
+
+    expect(sources().some((src) => src.includes("/branding/goldcoin-mascot.png"))).toBe(
       true,
     );
-    expect(sources.some((src) => src.includes("/brands/robinhood-mark.png"))).toBe(true);
+    expect(config.mark).not.toBeNull();
+    expect(sources().some((src) => src.includes(config.mark!.src))).toBe(true);
+  });
+
+  it("takes the mark from the config rather than naming a network in the component", () => {
+    // The same strip announcing a different launch: only the config moves.
+    const other: NetworkAnnouncementConfig = {
+      ...config,
+      mark: { src: "/branding/goldcoin-logo.png", width: 512, height: 512 },
+    };
+    renderWithQueryClient(<NetworkAnnouncement announcement={other} />);
+
+    expect(sources().some((src) => src.includes("/branding/goldcoin-logo.png"))).toBe(
+      true,
+    );
+    expect(sources().some((src) => src.includes("/brands/robinhood-mark.png"))).toBe(
+      false,
+    );
+  });
+
+  it("renders the strip with no mark at all when the config carries none", () => {
+    const markless: NetworkAnnouncementConfig = { ...config, mark: null };
+    renderWithQueryClient(<NetworkAnnouncement announcement={markless} />);
+
+    expect(banner()).toBeInTheDocument();
+    expect(sources()).toEqual([expect.stringContaining("/branding/goldcoin-mascot.png")]);
   });
 
   it("keeps both images decorative, so neither is announced", () => {
-    renderWithQueryClient(<NetworkAnnouncement />);
+    renderWithQueryClient(<NetworkAnnouncement announcement={config} />);
     // An empty alt plus aria-hidden: the heading already names the network,
     // and the mascot carries no information the text does not.
     expect(within(banner()).queryAllByRole("img")).toHaveLength(0);
@@ -263,7 +347,7 @@ describe("artwork", () => {
   });
 
   it("sets no width or height class that could distort either image", () => {
-    renderWithQueryClient(<NetworkAnnouncement />);
+    renderWithQueryClient(<NetworkAnnouncement announcement={config} />);
     for (const img of banner().querySelectorAll("img")) {
       // Height is driven; width follows the intrinsic ratio.
       expect(img.className).toContain("w-auto");
@@ -273,14 +357,14 @@ describe("artwork", () => {
 
 describe("controls", () => {
   it("offers no call to action — there is no page to open", () => {
-    renderWithQueryClient(<NetworkAnnouncement />);
+    renderWithQueryClient(<NetworkAnnouncement announcement={config} />);
     expect(
       within(banner()).queryByRole("button", { name: /learn more/i }),
     ).not.toBeInTheDocument();
   });
 
   it("leaves dismissal as the strip's only control, disabled or otherwise", () => {
-    renderWithQueryClient(<NetworkAnnouncement />);
+    renderWithQueryClient(<NetworkAnnouncement announcement={config} />);
 
     // A disabled button is still exposed to assistive technology, so this
     // catches a dead control being left behind as well as a live one.
@@ -292,7 +376,7 @@ describe("controls", () => {
   });
 
   it("renders no links whatsoever — a dead route is worse than no link", () => {
-    renderWithQueryClient(<NetworkAnnouncement />);
+    renderWithQueryClient(<NetworkAnnouncement announcement={config} />);
     expect(within(banner()).queryAllByRole("link")).toHaveLength(0);
     expect(banner().querySelectorAll("a")).toHaveLength(0);
   });
@@ -301,7 +385,7 @@ describe("controls", () => {
 describe("dismissal", () => {
   it("hides the strip when the labelled close button is pressed", async () => {
     const user = userEvent.setup();
-    renderWithQueryClient(<NetworkAnnouncement />);
+    renderWithQueryClient(<NetworkAnnouncement announcement={config} />);
 
     await user.click(
       within(banner()).getByRole("button", {
@@ -314,13 +398,13 @@ describe("dismissal", () => {
 
   it("stays hidden for the rest of the browser session", async () => {
     const user = userEvent.setup();
-    const first = renderWithQueryClient(<NetworkAnnouncement />);
+    const first = renderWithQueryClient(<NetworkAnnouncement announcement={config} />);
     await user.click(
       screen.getByRole("button", { name: `Dismiss the ${config.network} announcement` }),
     );
     first.unmount();
 
-    renderWithQueryClient(<NetworkAnnouncement />);
+    renderWithQueryClient(<NetworkAnnouncement announcement={config} />);
     expect(screen.queryByRole("region", { name: "Network announcement" })).toBeNull();
   });
 
@@ -330,7 +414,7 @@ describe("dismissal", () => {
       throw new Error("storage disabled");
     };
     try {
-      renderWithQueryClient(<NetworkAnnouncement />);
+      renderWithQueryClient(<NetworkAnnouncement announcement={config} />);
       expect(banner()).toBeInTheDocument();
     } finally {
       window.sessionStorage.getItem = original;
@@ -344,7 +428,7 @@ describe("beside the global trust strip", () => {
     renderWithQueryClient(
       <>
         <BridgeStatusBar initialStatus={status()} />
-        <NetworkAnnouncement />
+        <NetworkAnnouncement announcement={config} />
       </>,
     );
 
@@ -369,7 +453,7 @@ describe("beside the global trust strip", () => {
     renderWithQueryClient(
       <>
         <BridgeStatusBar initialStatus={fixtures.pausedStatusFixture()} />
-        <NetworkAnnouncement />
+        <NetworkAnnouncement announcement={config} />
       </>,
     );
 

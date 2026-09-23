@@ -116,7 +116,7 @@ describe("useTokenBalance", () => {
     expect(fetchTokenBalance).toHaveBeenCalledWith(
       {},
       "9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM",
-      "Hn6Kdxs6cJrXDLvArAief8ueTgdZLkRacLPPUZo2pump",
+      "GLCzUtuEUJJRBozMrwH3BN5TEy2T7XftGH8TR3yNX5HH",
       "GLC",
     );
   });

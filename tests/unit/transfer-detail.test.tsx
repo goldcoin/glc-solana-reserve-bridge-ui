@@ -502,7 +502,7 @@ function transfer4361(
       network: "solana",
       refund_amount_atomic: CLOSED_GROSS,
       refund_amount_native_atomic: "50000000000",
-      mint: "Hn6Kdxs6cJrXDLvArAief8ueTgdZLkRacLPPUZo2pump",
+      mint: "GLCzUtuEUJJRBozMrwH3BN5TEy2T7XftGH8TR3yNX5HH",
       tx_signature: SIGNATURE_4361,
       slot: 447_038_412,
       refunded_at: REFUNDED_AT,

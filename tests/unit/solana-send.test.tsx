@@ -30,7 +30,7 @@ vi.mock("@/lib/solana/adapter/provider", () => ({
 const envState = vi.hoisted(() => ({
   solanaRpcUrl: undefined as string | undefined,
   reserveProgramId: undefined as string | undefined,
-  reserveMintAddress: "Hn6Kdxs6cJrXDLvArAief8ueTgdZLkRacLPPUZo2pump",
+  reserveMintAddress: "GLCzUtuEUJJRBozMrwH3BN5TEy2T7XftGH8TR3yNX5HH",
 }));
 vi.mock("@/lib/config/env", () => ({ env: envState }));
 
