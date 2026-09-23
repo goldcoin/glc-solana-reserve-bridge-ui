@@ -57,8 +57,15 @@ import { cn } from "@/lib/utils/cn";
  * plus one entry in the total `Record` below, which is what stops a new
  * state from silently falling through to an existing one.
  *
- * The strip offers no call to action. There is no Robinhood page to open,
- * and the reason a route is closed belongs beside that route on /status
+ * Nothing here hardcodes WHICH network is being announced either. The
+ * name, the title, the dismissal key and the brand mark all arrive as one
+ * config object, and whether the strip renders at all is deployment
+ * configuration (`NEXT_PUBLIC_ANNOUNCEMENT_ENABLED`, fail-closed), so
+ * retiring one announcement and running the next is configuration rather
+ * than a rewrite of this file.
+ *
+ * The strip offers no call to action. There is no per-network page to
+ * open, and the reason a route is closed belongs beside that route on /status
  * rather than duplicated here — the backend's sentence is cause-agnostic
  * and there can be a different one per route. The heading, one line of
  * copy and the dismiss control are the whole row.
@@ -140,6 +147,12 @@ export function NetworkAnnouncement({
    */
   const mounted = useIsMounted();
 
+  /*
+   * `enabled` first, and it is the flag's fail-closed value: an unset or
+   * malformed `NEXT_PUBLIC_ANNOUNCEMENT_ENABLED` renders nothing at all —
+   * no region, no landmark, no dismissal control — rather than shipping a
+   * stale announcement.
+   */
   if (!announcement.enabled || !mounted || dismissed) return null;
 
   /*
@@ -243,32 +256,34 @@ export function NetworkAnnouncement({
                 ) : null}
               </h2>
               <p className="text-body-sm text-ink-700">
-                {ANNOUNCEMENT_STATUS_DESCRIPTION[status]}
+                {ANNOUNCEMENT_STATUS_DESCRIPTION[status](announcement.network)}
               </p>
             </div>
 
             {/*
-              The Robinhood mark. Purely decorative — the network is already
-              named in the heading, so announcing the image would say
-              "Robinhood" twice — and shown only from `xl` up, because below
-              that the row has no width left to give it. Decorative artwork is
-              the part that yields, not the copy, so the breakpoint stays
-              where it is rather than moving down into the space the removed
-              secondary text and divider left behind.
+              The announced network's own mark, from the config rather than
+              written in here — the component has no network in it. Purely
+              decorative: the network is already named in the heading, so
+              announcing the image would say it twice. Shown only from `xl`
+              up, because below that the row has no width left to give it;
+              decorative artwork is the part that yields, not the copy.
 
-              Natural ratio (1374x1145) with only a height set: a brand mark
-              that has been stretched is worse than a brand mark that is
-              absent.
+              Rendered at the mark's own intrinsic ratio with only a height
+              set: a brand mark that has been stretched is worse than a brand
+              mark that is absent — and `null` says absent, which is a
+              supported announcement rather than a missing asset.
             */}
-            <Image
-              src="/brands/robinhood-mark.png"
-              alt=""
-              aria-hidden="true"
-              width={1374}
-              height={1145}
-              priority={false}
-              className="ml-1 hidden h-9 w-auto shrink-0 select-none xl:block"
-            />
+            {announcement.mark ? (
+              <Image
+                src={announcement.mark.src}
+                alt=""
+                aria-hidden="true"
+                width={announcement.mark.width}
+                height={announcement.mark.height}
+                priority={false}
+                className="ml-1 hidden h-9 w-auto shrink-0 select-none xl:block"
+              />
+            ) : null}
           </div>
 
           <button

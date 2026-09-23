@@ -22,9 +22,14 @@ The bridge connects:
 
 Canonical Solana GLC mint:
 
-`Hn6Kdxs6cJrXDLvArAief8ueTgdZLkRacLPPUZo2pump`
+`GLCzUtuEUJJRBozMrwH3BN5TEy2T7XftGH8TR3yNX5HH`
 
-The Solana asset uses **Token-2022** and 6 decimal places.
+Reserve bridge program:
+
+`H8SoqRyBFQaT1o33vPGj7KCftFXs3SnLYtE81h1RRJgb`
+
+The Solana asset uses **Token-2022**
+(`TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb`) and 6 decimal places.
 
 Native Goldcoin uses 8 decimal places.
 

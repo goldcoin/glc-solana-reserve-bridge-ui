@@ -20,12 +20,12 @@ import type { Connection, Transaction } from "@solana/web3.js";
  * `simulateTransaction` against mainnet on 2026-09-12.
  */
 const PAUSED_LOGS = [
-  "Program 6tmLSP2j2thito2RpByqgfKHuVRSLcNd9c5FkrLJMjja invoke [1]",
+  "Program H8SoqRyBFQaT1o33vPGj7KCftFXs3SnLYtE81h1RRJgb invoke [1]",
   "Program 11111111111111111111111111111111 invoke [2]",
   "Program 11111111111111111111111111111111 success",
   "Program log: AnchorError thrown in programs/glc-reserve-bridge/src/instructions/deposit_to_reserve.rs:104. Error Code: DepositDirectionPaused. Error Number: 6020. Error Message: Solana -> Goldcoin deposit direction is paused.",
-  "Program 6tmLSP2j2thito2RpByqgfKHuVRSLcNd9c5FkrLJMjja consumed 29891 of 200000 compute units",
-  "Program 6tmLSP2j2thito2RpByqgfKHuVRSLcNd9c5FkrLJMjja failed: custom program error: 0x1784",
+  "Program H8SoqRyBFQaT1o33vPGj7KCftFXs3SnLYtE81h1RRJgb consumed 29891 of 200000 compute units",
+  "Program H8SoqRyBFQaT1o33vPGj7KCftFXs3SnLYtE81h1RRJgb failed: custom program error: 0x1784",
 ];
 const PAUSED_ERR = { InstructionError: [0, { Custom: 6020 }] };
 

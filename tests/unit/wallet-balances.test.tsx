@@ -17,7 +17,7 @@ type BalanceData = { raw: string; decimals: number; symbol: string } | undefined
 const { envState, solState, tokenState } = vi.hoisted(() => ({
   envState: {
     solanaCluster: "localnet" as string,
-    reserveMintAddress: "Hn6Kdxs6cJrXDLvArAief8ueTgdZLkRacLPPUZo2pump",
+    reserveMintAddress: "GLCzUtuEUJJRBozMrwH3BN5TEy2T7XftGH8TR3yNX5HH",
   },
   solState: {
     isPending: false,

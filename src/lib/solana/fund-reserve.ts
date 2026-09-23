@@ -34,9 +34,15 @@ import type { WalletBalance } from "./types";
 
 /** The reserve's existing Solana Token-2022 account — production value,
  * intentionally hard-coded rather than configurable. This is the ONE and
- * ONLY acceptable destination for this feature; see `assertIsReserveTokenAccount`. */
+ * ONLY acceptable destination for this feature; see `assertIsReserveTokenAccount`.
+ *
+ * Moved here by the Token-2022 asset migration, alongside the mint
+ * (`GLCz…NX5HH`) and the bridge program (`H8So…RJgb`). The previous vault
+ * (`5AFs…P2kp`) belonged to the retired mint and must never be funded
+ * again: a transfer to it would be checked against a mint the reserve no
+ * longer holds. */
 export const RESERVE_TOKEN_ACCOUNT_ADDRESS =
-  "5AFssVkaz9nzS2tSQowUqYYmpg7wPSJa1mLKxuHKP2kp";
+  "DS7dJAFRZhwp9TbxkHtrXihmzaidMm8sqWFrshUr5r5W";
 
 /** The canonical Solana GLC (Token-2022) mint's fixed, protocol-level
  * decimals — never derived from a live read for this feature, since a

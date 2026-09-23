@@ -28,7 +28,7 @@ const {
   walletBalanceRefetch,
   reserveBalanceRefetch,
 } = vi.hoisted(() => ({
-  RESERVE_ADDRESS: "5AFssVkaz9nzS2tSQowUqYYmpg7wPSJa1mLKxuHKP2kp",
+  RESERVE_ADDRESS: "DS7dJAFRZhwp9TbxkHtrXihmzaidMm8sqWFrshUr5r5W",
   walletConnection: {
     status: "disconnected" as string,
     address: null as string | null,

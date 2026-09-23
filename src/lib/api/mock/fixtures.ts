@@ -726,7 +726,7 @@ const REFUND_CHAIN: readonly {
 const MANUAL_REFUND_SIGNATURE =
   "3NzHem3knwoaPef5WJuWTD442tLHP1SfuaevUXHezQoiWCxvXiCwNWX3aMeExJ3AWpon9crTBR8a3Mek6SXbrcbZ";
 
-const MANUAL_REFUND_MINT = "Hn6Kdxs6cJrXDLvArAief8ueTgdZLkRacLPPUZo2pump";
+const MANUAL_REFUND_MINT = "GLCzUtuEUJJRBozMrwH3BN5TEy2T7XftGH8TR3yNX5HH";
 
 /**
  * The record the backend attaches to a closed, hand-refunded request.

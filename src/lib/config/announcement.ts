@@ -1,6 +1,7 @@
 import type { ChainsViewDto } from "@/lib/api/schemas/chains";
 import { routeAvailability } from "@/lib/bridge/route-availability";
 import { routesTouchingChain } from "@/lib/bridge/route-resolution";
+import { env } from "@/lib/config/env";
 
 /**
  * The network integration strip.
@@ -37,15 +38,21 @@ import { routesTouchingChain } from "@/lib/bridge/route-resolution";
  * strip could not keep reporting on half the integration once the two
  * cross routes shipped.
  *
- * Turning the strip off is a one-line edit to `enabled` below, and every
- * string it renders lives here rather than in the component.
+ * # Turning it off, and turning the next one on
+ *
+ * Whether the strip renders at all is deployment configuration
+ * (`NEXT_PUBLIC_ANNOUNCEMENT_ENABLED`), not a code edit, and it is
+ * fail-closed: unset or anything other than "true" means hidden. That is
+ * what retires the Robinhood announcement without deleting the feature.
+ *
+ * Nothing below names Robinhood outside the one config object. The chain
+ * whose routes are reported, the network's own name, the title, the
+ * dismissal key and the brand mark are all fields of
+ * `NETWORK_ANNOUNCEMENT`, and the per-status copy is a template taking the
+ * network name. Announcing the next token or chain launch is therefore an
+ * edit to that object plus flipping the flag on — the component, the
+ * status derivation and the tests are all reusable as they stand.
  */
-
-/**
- * The routes this strip reports on: every route touching Robinhood, in the
- * route table's own order. Four today.
- */
-const ROBINHOOD_ROUTES = routesTouchingChain("robinhood");
 
 /**
  * What the strip is reporting, derived from route availability.
@@ -64,23 +71,52 @@ export type NetworkAnnouncementStatus =
   /** `/chains` has not answered. Says so; claims nothing. */
   | "unknown";
 
+/**
+ * A network's brand mark, shown decoratively at the end of the strip. The
+ * intrinsic dimensions travel with it because `next/image` needs them and
+ * because a mark that has been stretched is worse than one that is absent.
+ * `null` is a supported state: the heading already names the network.
+ */
+export interface AnnouncementMark {
+  readonly src: string;
+  readonly width: number;
+  readonly height: number;
+}
+
 export interface NetworkAnnouncement {
+  /**
+   * From `NEXT_PUBLIC_ANNOUNCEMENT_ENABLED`, fail-closed. Not a code
+   * constant: retiring an announcement is a deployment decision, and an
+   * unset flag must hide the strip rather than ship a stale one.
+   */
   readonly enabled: boolean;
+  /**
+   * The chain whose routes this strip reports on, as the route table keys
+   * it (`routesTouchingChain`). Announcing a different network means
+   * changing this, not the status derivation below.
+   */
+  readonly chain: string;
   readonly network: string;
   readonly title: string;
   /**
    * Namespaced, matching `THEME_STORAGE_KEY`: this origin also carries the
    * Solana wallet adapter's own storage keys, and a bare `dismissed` would be
    * a collision waiting to happen.
+   *
+   * Announcement-specific on purpose. A new announcement wants a new key,
+   * so that a reader who dismissed the previous one still sees it.
    */
   readonly storageKey: string;
+  readonly mark: AnnouncementMark | null;
 }
 
 export const NETWORK_ANNOUNCEMENT: NetworkAnnouncement = {
-  enabled: true,
+  enabled: env.announcementEnabled,
+  chain: "robinhood",
   network: "Robinhood Network",
   title: "Robinhood Network GLC bridge integration",
   storageKey: "glc-bridge-announcement-robinhood",
+  mark: { src: "/brands/robinhood-mark.png", width: 1374, height: 1145 },
 };
 
 /**
@@ -96,40 +132,52 @@ export const ANNOUNCEMENT_STATUS_LABEL: Record<NetworkAnnouncementStatus, string
 };
 
 /**
- * The one line of copy per status.
+ * The one line of copy per status, as a function of the announced network's
+ * name rather than as four sentences with "Robinhood Network" typed into
+ * them. Announcing a different network reuses these verbatim.
  *
  * Deliberately neutral and free of launch language: no date, no "coming
  * soon", no "launches". It describes the integration as deployed and then
  * reports what the backend says about its routes, which is the only claim
  * this strip is entitled to make.
  */
-export const ANNOUNCEMENT_STATUS_DESCRIPTION: Record<NetworkAnnouncementStatus, string> =
-  {
-    available:
-      "Every GLC bridge route to and from Robinhood Network is available right now.",
-    partial: "Some Robinhood Network bridge routes are temporarily unavailable.",
-    unavailable: "Robinhood Network bridge routes are not available right now.",
-    unknown: "Checking Robinhood Network route availability…",
-  };
+export const ANNOUNCEMENT_STATUS_DESCRIPTION: Record<
+  NetworkAnnouncementStatus,
+  (network: string) => string
+> = {
+  available: (network) =>
+    `Every GLC bridge route to and from ${network} is available right now.`,
+  partial: (network) => `Some ${network} bridge routes are temporarily unavailable.`,
+  unavailable: (network) => `${network} bridge routes are not available right now.`,
+  unknown: (network) => `Checking ${network} route availability…`,
+};
 
 /**
  * The strip's status, from `GET /chains` alone.
  *
  * A route counts as available only when the backend positively answered
  * `available: true` — the same fail-closed rule every other consumer of
- * this endpoint applies. `enabled` is not consulted: a route that is
- * switched on and held shut by its destination reserve is not one a user
- * can use, which is the only thing this strip reports.
+ * this endpoint applies. The route-level `enabled` flag is not consulted:
+ * a route that is switched on and held shut by its destination reserve is
+ * not one a user can use, which is the only thing this strip reports.
+ *
+ * The routes are derived from the announced chain, in the route table's own
+ * order — four for Robinhood today — so the strip cannot end up reporting
+ * on half an integration once more routes ship, and announcing a different
+ * network needs no edit here at all.
  */
 export function networkAnnouncementStatus(
   chains: ChainsViewDto | undefined,
+  announcement: NetworkAnnouncement = NETWORK_ANNOUNCEMENT,
 ): NetworkAnnouncementStatus {
   if (!chains) return "unknown";
-  const available = ROBINHOOD_ROUTES.filter((route) => {
+  const routes = routesTouchingChain(announcement.chain);
+  if (routes.length === 0) return "unknown";
+  const available = routes.filter((route) => {
     const state = routeAvailability(chains, route);
     return state.kind === "open" && state.availabilityKnown;
   }).length;
-  if (available === ROBINHOOD_ROUTES.length) return "available";
+  if (available === routes.length) return "available";
   if (available === 0) return "unavailable";
   return "partial";
 }

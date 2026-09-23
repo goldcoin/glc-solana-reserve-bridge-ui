@@ -10,7 +10,7 @@ import {
 } from "@/lib/solana/balances";
 
 const OWNER = "9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM";
-const MINT = "Hn6Kdxs6cJrXDLvArAief8ueTgdZLkRacLPPUZo2pump";
+const MINT = "GLCzUtuEUJJRBozMrwH3BN5TEy2T7XftGH8TR3yNX5HH";
 
 describe("lamportsToBalance", () => {
   it("converts a number of lamports to a SOL balance", () => {

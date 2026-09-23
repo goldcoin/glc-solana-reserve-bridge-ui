@@ -21,7 +21,7 @@ import {
 
 const PROGRAM_ID = new PublicKey("BnCFcMaZtpXUzZhXZdQSeQWH4A2BMv5ZaebGe6Ysv2oY");
 const USER = new PublicKey("9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM");
-const RESERVE_MINT = new PublicKey("Hn6Kdxs6cJrXDLvArAief8ueTgdZLkRacLPPUZo2pump");
+const RESERVE_MINT = new PublicKey("GLCzUtuEUJJRBozMrwH3BN5TEy2T7XftGH8TR3yNX5HH");
 
 describe("getDepositCapability — checked in priority order, always a stated reason", () => {
   const base = {
